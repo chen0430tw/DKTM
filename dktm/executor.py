@@ -128,25 +128,30 @@ class Executor:
 
         Returns true if the command was handled.
         """
+        # Determine if we're in dry-run mode
+        dry_run = (self.mode != "real-run")
+
         # Mapping of command names to platform operations
         if command == "commit_transition":
             platform_ops.commit_transition(
                 winpe_entry_ids=self.winpe_entry_ids,
                 marker_path=self.marker_path,
                 auto_reboot=self.auto_reboot,
+                dry_run=dry_run
             )
             return True
         elif command == "rollback_transition":
             platform_ops.rollback_transition(
                 winpe_entry_ids=self.winpe_entry_ids,
                 marker_path=self.marker_path,
+                dry_run=dry_run
             )
             return True
         elif command == "handover_control":
-            platform_ops.handover_control()
+            platform_ops.handover_control(dry_run=dry_run)
             return True
         elif command == "reboot":
-            platform_ops.reboot()
+            platform_ops.reboot(dry_run=dry_run)
             return True
         return False
 
