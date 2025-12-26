@@ -288,7 +288,8 @@ cmd
 """
 
         try:
-            startnet.write_text(startnet_content, encoding="ansi")
+            # Use mbcs encoding for Windows batch files (equivalent to system default)
+            startnet.write_text(startnet_content, encoding="mbcs")
             self.logger.info("✓ startnet.cmd configured")
             return True
         except Exception as exc:

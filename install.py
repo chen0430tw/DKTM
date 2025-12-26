@@ -74,13 +74,17 @@ class DKTMInstaller:
             return False
 
         # Check required Python packages
-        required_packages = ["numpy", "pyyaml"]
+        # Note: package name for import may differ from pip install name
+        required_packages = {
+            "numpy": "numpy",
+            "yaml": "pyyaml"  # Import as 'yaml', install as 'pyyaml'
+        }
         missing = []
-        for package in required_packages:
+        for import_name, pip_name in required_packages.items():
             try:
-                __import__(package)
+                __import__(import_name)
             except ImportError:
-                missing.append(package)
+                missing.append(pip_name)
 
         if missing:
             self.logger.error(f"✗ Missing Python packages: {', '.join(missing)}")

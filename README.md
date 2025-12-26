@@ -47,7 +47,17 @@ DKTM 是一个**真正的一键热重启系统**，不是简单的 bcdedit 套�
 - Python 3.7+
 - Windows ADK（会自动检测）
 
-### 2. 一键安装
+### 2. 安装依赖
+
+```bash
+# 安装 Python 依赖
+pip install -r requirements.txt
+
+# 或手动安装
+pip install numpy pyyaml
+```
+
+### 3. 一键安装
 
 ```bash
 # 以管理员身份运行
@@ -60,7 +70,7 @@ python install.py
 - ✅ 自动配置系统
 - ✅ 自动验证安装
 
-### 3. 一键热重启
+### 4. 一键热重启
 
 ```bash
 # 测试模式（不会真的重启）
