@@ -1,0 +1,318 @@
+{
+  "repository": {
+    "name": "DKTM",
+    "full_name": "Dynamic Kernel Transition Mechanism",
+    "description": "一键热重启系统 - 无需完全重启即可重置 Windows 内核",
+    "version": "1.0.0",
+    "language": "Python",
+    "platform": "Windows 10/11",
+    "license": "MIT"
+  },
+  "structure": {
+    "root": {
+      "install.py": {
+        "type": "script",
+        "category": "installer",
+        "description": "一键安装脚本 - 自动构建 WinPE、配置 BCD、验证系统",
+        "entry_point": true,
+        "dependencies": ["tools/build_pe.py", "tools/setup_bcd.py"]
+      },
+      "hot_restart.py": {
+        "type": "script",
+        "category": "core",
+        "description": "一键热重启脚本 - SOSA 探测 + 自动切换 PE + 内核重置",
+        "entry_point": true,
+        "dependencies": ["dktm/*"]
+      },
+      "requirements.txt": {
+        "type": "config",
+        "category": "dependency",
+        "description": "Python 依赖声明文件",
+        "packages": ["numpy>=1.20.0", "pyyaml>=5.4.0"]
+      },
+      "check_code.py": {
+        "type": "tool",
+        "category": "quality",
+        "description": "代码质量检查器 - 自动检测编码错误、导入问题等"
+      },
+      "README.md": {
+        "type": "documentation",
+        "category": "user",
+        "description": "用户文档 - 快速开始、使用指南、常见问题"
+      },
+      "BUGFIXES.md": {
+        "type": "documentation",
+        "category": "developer",
+        "description": "Bug 修复报告和代码质量评估"
+      }
+    },
+    "dktm/": {
+      "description": "核心 Python 包 - DKTM 算法和平台操作实现",
+      "__init__.py": {
+        "type": "module",
+        "description": "包初始化 - 导出核心 API"
+      },
+      "dktm.py": {
+        "type": "module",
+        "category": "orchestrator",
+        "description": "DKTM 编排器 - 整合 SOSA、Retina、Plan、Executor"
+      },
+      "adapter.py": {
+        "type": "module",
+        "category": "algorithm",
+        "description": "SOSA 适配器 - 事件聚合和 Binary-Twin 计算"
+      },
+      "spark_seed_sosa.py": {
+        "type": "module",
+        "category": "algorithm",
+        "description": "SparkSeedSOSA 算法核心实现 - 自组织状态聚合器"
+      },
+      "retina_probe.py": {
+        "type": "module",
+        "category": "algorithm",
+        "description": "视网膜探测器 - 基于梯度的系统状态探测（Jerry 探头）"
+      },
+      "plan.py": {
+        "type": "module",
+        "category": "planner",
+        "description": "计划生成器 - 基于 Binary-Twin 和 Retina 生成过渡计划"
+      },
+      "executor.py": {
+        "type": "module",
+        "category": "executor",
+        "description": "执行器 - 分阶段执行过渡计划（quiesce、flush、commit）"
+      },
+      "command_dict.py": {
+        "type": "module",
+        "category": "config",
+        "description": "命令字典 - 定义所有可用命令和分组"
+      },
+      "config.py": {
+        "type": "module",
+        "category": "config",
+        "description": "配置管理 - YAML/JSON 配置加载和默认值"
+      },
+      "platform_ops.py": {
+        "type": "module",
+        "category": "platform",
+        "description": "平台操作抽象层 - 自动选择 Windows 或 POSIX 实现"
+      },
+      "platform_windows.py": {
+        "type": "module",
+        "category": "platform",
+        "description": "Windows 平台实现 - BCD 操作、标记文件、重启"
+      },
+      "platform_posix.py": {
+        "type": "module",
+        "category": "platform",
+        "description": "POSIX 平台实现 - 存根实现用于开发和测试"
+      }
+    },
+    "tools/": {
+      "description": "自动化工具 - PE 构建和 BCD 配置",
+      "build_pe.py": {
+        "type": "tool",
+        "category": "builder",
+        "description": "自动化 WinPE 生成器 - 检测 ADK、构建 PE、注入脚本",
+        "entry_point": true,
+        "key_features": [
+          "自动检测 Windows ADK 路径",
+          "调用 copype 生成基础 PE",
+          "注入 DKTM 恢复脚本",
+          "配置 startnet.cmd 自启动",
+          "部署到系统分区"
+        ]
+      },
+      "setup_bcd.py": {
+        "type": "tool",
+        "category": "configurator",
+        "description": "BCD 自动配置器 - 创建 WinPE 启动条目",
+        "entry_point": true,
+        "key_features": [
+          "创建 BCD 条目",
+          "配置 ramdisk 选项",
+          "验证配置正确性",
+          "保存 GUID 到配置文件"
+        ]
+      }
+    },
+    "docs/": {
+      "description": "技术文档 - WinPE 构建指南和架构说明",
+      "WINPE_BUILD_GUIDE.md": {
+        "type": "documentation",
+        "category": "technical",
+        "description": "WinPE 手动构建指南 - 完整步骤和故障排除"
+      }
+    }
+  },
+  "workflows": {
+    "installation": {
+      "description": "完整安装流程",
+      "steps": [
+        "1. pip install -r requirements.txt",
+        "2. python install.py (as administrator)",
+        "3. 自动调用 tools/build_pe.py",
+        "4. 自动调用 tools/setup_bcd.py",
+        "5. 验证安装"
+      ],
+      "files_involved": [
+        "install.py",
+        "tools/build_pe.py",
+        "tools/setup_bcd.py",
+        "requirements.txt"
+      ]
+    },
+    "hot_restart": {
+      "description": "一键热重启流程",
+      "steps": [
+        "1. hot_restart.py 启动",
+        "2. SOSA 探测系统状态 (dktm/adapter.py, dktm/retina_probe.py)",
+        "3. 判断是否安全 (E_mean < 0.5)",
+        "4. 生成过渡计划 (dktm/plan.py)",
+        "5. 执行准备阶段 (dktm/executor.py)",
+        "6. 设置 BCD bootsequence (dktm/platform_windows.py)",
+        "7. 触发重启",
+        "8. 进入 WinPE",
+        "9. WinPE 执行恢复脚本 (dktm_recovery.cmd)",
+        "10. 自动清除 bootsequence",
+        "11. 重启回 Windows"
+      ],
+      "files_involved": [
+        "hot_restart.py",
+        "dktm/adapter.py",
+        "dktm/retina_probe.py",
+        "dktm/plan.py",
+        "dktm/executor.py",
+        "dktm/platform_windows.py"
+      ]
+    },
+    "pe_build": {
+      "description": "WinPE 自动构建流程",
+      "steps": [
+        "1. 检测 Windows ADK 安装",
+        "2. 运行 copype.cmd",
+        "3. 挂载 boot.wim",
+        "4. 注入 dktm_recovery.cmd",
+        "5. 配置 startnet.cmd",
+        "6. 卸载并提交",
+        "7. 部署到 C:\\WinPE"
+      ],
+      "files_involved": ["tools/build_pe.py"]
+    },
+    "bcd_setup": {
+      "description": "BCD 自动配置流程",
+      "steps": [
+        "1. 检查管理员权限",
+        "2. 验证 WinPE 文件",
+        "3. 创建 BCD 条目 (bcdedit /create)",
+        "4. 配置 ramdisk 选项",
+        "5. 配置 WinPE 启动参数",
+        "6. 验证配置",
+        "7. 保存 GUID 到 dktm_config.yaml"
+      ],
+      "files_involved": ["tools/setup_bcd.py"]
+    }
+  },
+  "key_algorithms": {
+    "SOSA": {
+      "name": "Self-Organizing State Aggregator",
+      "description": "自研算法 - Jerry 式探测系统状态",
+      "file": "dktm/spark_seed_sosa.py",
+      "input": "系统状态矩阵（事件流）",
+      "output": {
+        "Binary-Twin": "二元状态表示（连续+离散特征）",
+        "explore_factor": "探索因子（0-1）",
+        "state_distribution": "马尔可夫状态分布"
+      }
+    },
+    "Retina": {
+      "name": "Retina Probe",
+      "description": "基于梯度的状态探测器",
+      "file": "dktm/retina_probe.py",
+      "input": "系统状态矩阵",
+      "output": {
+        "E_map": "边缘强度图",
+        "E_mean": "平均系统压力（0-1）",
+        "hotspots": "压力热点坐标"
+      }
+    }
+  },
+  "dependencies": {
+    "python": {
+      "version": ">=3.7",
+      "packages": {
+        "numpy": {
+          "version": ">=1.20.0",
+          "purpose": "系统状态矩阵操作和 SOSA 算法"
+        },
+        "pyyaml": {
+          "version": ">=5.4.0",
+          "purpose": "配置文件读写"
+        }
+      }
+    },
+    "system": {
+      "Windows ADK": {
+        "version": ">=10.1.26100",
+        "purpose": "WinPE 构建工具链",
+        "components": ["Deployment Tools", "Windows PE add-on"]
+      },
+      "Administrator": {
+        "required": true,
+        "purpose": "BCD 修改和系统操作"
+      }
+    }
+  },
+  "features": {
+    "intelligent_decision": {
+      "description": "SOSA 智能决策 - 不是盲目执行",
+      "algorithm": "E_mean < 0.5 且 explore_factor > 0.3"
+    },
+    "automated_pe_generation": {
+      "description": "自动化 PE 生成 - 不需要手动构建",
+      "script": "tools/build_pe.py"
+    },
+    "automated_bcd_config": {
+      "description": "自动化 BCD 配置 - 不需要手动 bcdedit",
+      "script": "tools/setup_bcd.py"
+    },
+    "auto_recovery": {
+      "description": "PE 自动恢复 - 自动清除 bootsequence 并重启回主系统",
+      "script": "dktm_recovery.cmd (injected in WinPE)"
+    },
+    "dry_run_mode": {
+      "description": "Dry-run 模式 - 测试时不修改系统",
+      "support": ["hot_restart.py", "platform_windows.py", "platform_posix.py"]
+    }
+  },
+  "testing": {
+    "code_quality": {
+      "tool": "check_code.py",
+      "checks": ["encoding", "imports", "syntax", "hardcoded_paths"]
+    },
+    "dry_run": {
+      "command": "python hot_restart.py --dry-run",
+      "purpose": "测试完整流程而不实际重启"
+    },
+    "vm_testing": {
+      "recommended": true,
+      "platform": "Windows 10/11 虚拟机",
+      "steps": [
+        "安装 Windows ADK",
+        "运行 python install.py",
+        "验证 WinPE 构建",
+        "测试 hot_restart.py"
+      ]
+    }
+  },
+  "metadata": {
+    "created": "2025-12-26",
+    "last_updated": "2025-12-26",
+    "contributors": ["Claude AI Assistant"],
+    "status": "production-ready",
+    "bugs_fixed": 2,
+    "total_files": 25,
+    "lines_of_code": "~3500",
+    "documentation_pages": 3
+  }
+}

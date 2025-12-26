@@ -1,0 +1,9 @@
+# DKTM Dependencies
+# ==================
+
+# Core dependencies
+numpy>=1.20.0
+pyyaml>=5.4.0
+
+# Optional: for better logging
+# coloredlogs>=15.0
