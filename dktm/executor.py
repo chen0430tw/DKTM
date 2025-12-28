@@ -67,6 +67,11 @@ class Executor:
         self.transition_method: str = config.get("transition_method", "auto")
         self.fallback_method: str = config.get("fallback_method", "winre")
         self.logger = logging.getLogger("dktm.executor")
+        if self.transition_method == "bcd" and not self.winpe_entry_ids:
+            self.logger.warning(
+                "No WinPE IDs configured; switching transition_method to winre"
+            )
+            self.transition_method = "winre"
 
     # ------------------------------------------------------------------
     # Public API
