@@ -65,6 +65,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # deleted on rollback.  On Windows this should be an absolute
         # path; on POSIX systems a temporary directory may be used.
         "marker_path": "dktm_transition.marker",
+        # Transition method: 'bcd' uses bootsequence, 'winre' uses the
+        # Windows Recovery Environment, and 'auto' attempts BCD first
+        # then falls back to WinRE if available.
+        "transition_method": "auto",
+        # Fallback method to use when auto or primary method fails.
+        "fallback_method": "winre",
     },
 }
 

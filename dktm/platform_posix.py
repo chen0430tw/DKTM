@@ -42,7 +42,12 @@ class PlatformOps:
         self.dry_run = dry_run
         self.logger = logging.getLogger("dktm.platform.posix")
 
-    def commit_transition(self, auto_reboot: bool = False) -> None:
+    def commit_transition(
+        self,
+        auto_reboot: bool = False,
+        transition_method: str = "bcd",
+        fallback_method: str = "winre",
+    ) -> None:
         """Stub implementation of commit_transition for POSIX.
 
         Creates a marker file to simulate a pending transition and logs
@@ -50,11 +55,12 @@ class PlatformOps:
         """
         mode = "[DRY-RUN]" if self.dry_run else "[POSIX]"
         self.logger.info(
-            "%s commit_transition called with winpe_entry_ids=%s, marker_path=%s, auto_reboot=%s",
+            "%s commit_transition called with winpe_entry_ids=%s, marker_path=%s, auto_reboot=%s, transition_method=%s",
             mode,
             self.winpe_entry_ids,
             self.marker_path,
             auto_reboot,
+            transition_method,
         )
         # Write marker file
         if self.marker_path and not self.dry_run:

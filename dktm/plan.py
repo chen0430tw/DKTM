@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from command_dict import get_group_id
+from .command_dict import get_group_id
 
 def build_plan(binary_twin: Dict[str, Any], explore_factor: float, retina_result: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Generate a simple plan based on binary‑twin features, exploration factor and retina result.
