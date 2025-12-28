@@ -182,6 +182,10 @@ class PlatformOps:
         RuntimeError
             If WinPE entry IDs are not configured or operation fails.
         """
+        # Validate configuration
+        if not self.winpe_entry_ids:
+            raise RuntimeError("No WinPE entry IDs configured; cannot commit transition")
+
         entry_id = self.winpe_entry_ids[0] if self.winpe_entry_ids else None
         self.logger.info("=== Committing DKTM Transition ===")
         self.logger.info("Transition method: %s", transition_method)
@@ -207,6 +211,8 @@ class PlatformOps:
                         "No WinPE entry IDs; falling back to %s",
                         fallback_method
                     )
+                if transition_method == "auto" and fallback_method:
+                    self.logger.warning("No WinPE entry IDs; falling back to %s", fallback_method)
                     used_method = fallback_method
                 else:
                     raise RuntimeError("No WinPE entry IDs configured; cannot use BCD")
