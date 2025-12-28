@@ -206,6 +206,11 @@ class PlatformOps:
 
         if used_method == "bcd":
             if not entry_id:
+                if fallback_method:
+                    self.logger.warning(
+                        "No WinPE entry IDs; falling back to %s",
+                        fallback_method
+                    )
                 if transition_method == "auto" and fallback_method:
                     self.logger.warning("No WinPE entry IDs; falling back to %s", fallback_method)
                     used_method = fallback_method
