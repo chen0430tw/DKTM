@@ -109,7 +109,60 @@ class PlatformOps:
             self.logger.error("bcdedit not found. Are you running on Windows?")
             return None
 
-    def commit_transition(self, auto_reboot: bool = False) -> None:
+    def _run_reagentc(self, args: List[str], check: bool = True) -> Optional[str]:
+        """Execute reagentc command."""
+        if self.dry_run:
+            cmd_str = " ".join(["reagentc"] + args)
+            self.logger.info("[DRY-RUN] Would execute: %s", cmd_str)
+            return None
+
+        try:
+            result = subprocess.run(
+                ["reagentc"] + args,
+                capture_output=True,
+                text=True,
+                check=check,
+                encoding="mbcs",
+                errors="replace"
+            )
+            return result.stdout
+        except subprocess.CalledProcessError as exc:
+            self.logger.error("reagentc failed: %s\nOutput: %s", exc, exc.stderr)
+            if check:
+                raise
+            return None
+        except FileNotFoundError:
+            self.logger.error("reagentc not found. Are you running on Windows?")
+            return None
+
+    def _is_winre_enabled(self) -> Optional[bool]:
+        """Check whether Windows Recovery Environment is enabled."""
+        output = self._run_reagentc(["/info"], check=False)
+        if output is None:
+            return None
+        for line in output.splitlines():
+            if "Windows RE status" in line:
+                return "enabled" in line.lower()
+        return None
+
+    def _set_winre_boot_once(self) -> None:
+        """Configure a one-time boot into WinRE."""
+        status = self._is_winre_enabled()
+        if status is False:
+            self.logger.info("WinRE disabled; attempting to enable...")
+            self._run_reagentc(["/enable"])
+            status = self._is_winre_enabled()
+        if status is not True:
+            raise RuntimeError("WinRE is not enabled; cannot boot to recovery")
+        self._run_reagentc(["/boottore"])
+        self.logger.info("✓ WinRE boot-to-recovery scheduled")
+
+    def commit_transition(
+        self,
+        auto_reboot: bool = False,
+        transition_method: str = "bcd",
+        fallback_method: str = "winre",
+    ) -> None:
         """Prepare the system to boot into WinPE on next reboot.
 
         This method:
@@ -129,13 +182,11 @@ class PlatformOps:
         RuntimeError
             If WinPE entry IDs are not configured or operation fails.
         """
-        # Validate configuration
-        if not self.winpe_entry_ids:
-            raise RuntimeError("No WinPE entry IDs configured; cannot commit transition")
-
-        entry_id = self.winpe_entry_ids[0]
+        entry_id = self.winpe_entry_ids[0] if self.winpe_entry_ids else None
         self.logger.info("=== Committing DKTM Transition ===")
-        self.logger.info("Target WinPE entry: %s", entry_id)
+        self.logger.info("Transition method: %s", transition_method)
+        if entry_id:
+            self.logger.info("Target WinPE entry: %s", entry_id)
 
         # Check privileges (warning only in dry-run)
         if not self._check_admin_privileges():
@@ -145,24 +196,52 @@ class PlatformOps:
             else:
                 raise RuntimeError(msg)
 
-        # Backup current bootsequence
-        self._backup_boot_config()
+        used_method = transition_method
+        if transition_method == "auto":
+            used_method = "bcd"
 
-        # Set one-time boot sequence
-        self.logger.info("Setting bootsequence to %s", entry_id)
-        try:
-            self._run_bcdedit(["/bootsequence", entry_id])
-            self.logger.info("✓ Boot sequence set successfully")
-        except Exception as exc:
-            self.logger.error("Failed to set bootsequence: %s", exc)
-            raise RuntimeError(f"BCD modification failed: {exc}")
+        if used_method == "bcd":
+            if not entry_id:
+                if not fallback_method:
+                    fallback_method = "winre"
+                self.logger.warning(
+                    "No WinPE entry IDs; falling back to %s",
+                    fallback_method
+                )
+                used_method = fallback_method
+
+            if used_method == "bcd":
+                # Backup current bootsequence
+                self._backup_boot_config()
+
+                # Set one-time boot sequence
+                self.logger.info("Setting bootsequence to %s", entry_id)
+                try:
+                    self._run_bcdedit(["/bootsequence", entry_id])
+                    self.logger.info("✓ Boot sequence set successfully")
+                except Exception as exc:
+                    self.logger.error("Failed to set bootsequence: %s", exc)
+                    if transition_method == "auto" and fallback_method:
+                        self.logger.warning("Falling back to %s transition method", fallback_method)
+                        used_method = fallback_method
+                    else:
+                        raise RuntimeError(f"BCD modification failed: {exc}")
+
+        if used_method == "winre":
+            self._set_winre_boot_once()
+        elif used_method not in ("bcd", "winre"):
+            raise RuntimeError(f"Unknown transition method: {used_method}")
 
         # Write marker file with metadata
-        self._write_marker(entry_id)
+        if entry_id:
+            self._write_marker(entry_id)
 
         # Display summary
         self.logger.info("=== Transition Committed ===")
-        self.logger.info("Next boot will enter: WinPE (%s)", entry_id)
+        if used_method == "winre":
+            self.logger.info("Next boot will enter: WinRE recovery environment")
+        else:
+            self.logger.info("Next boot will enter: WinPE (%s)", entry_id)
         self.logger.info("Marker file: %s", self.marker_path)
 
         if auto_reboot:
