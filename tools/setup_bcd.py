@@ -255,7 +255,9 @@ class BCDConfigurator:
                 ["bcdedit", "/enum", self.winpe_guid],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                encoding="mbcs",
+                errors="replace"
             )
 
             # Check for required fields

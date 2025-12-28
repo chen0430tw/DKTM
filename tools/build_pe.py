@@ -191,15 +191,23 @@ echo   DKTM Hot Restart - Recovery Phase
 echo ========================================
 echo.
 
-REM Check for transition marker
-set MARKER_PATH=C:\DKTM\dktm_transition.marker
+REM === Locate DKTM transition marker ===
+set MARKER_PATH=
 
-if not exist %MARKER_PATH% (
-    echo [ERROR] No transition marker found!
-    echo [INFO] Entering manual recovery mode...
-    cmd
-    exit /b 1
+for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
+    if exist %%D:\DKTM\dktm_transition.marker (
+        set MARKER_PATH=%%D:\DKTM\dktm_transition.marker
+        goto :marker_found
+    )
 )
+
+echo [ERROR] No transition marker found!
+echo [INFO] Entering manual recovery mode...
+cmd
+exit /b 1
+
+:marker_found
+echo [INFO] Transition marker found at %MARKER_PATH%
 
 echo [INFO] Transition marker detected
 echo [INFO] Reading transition context...
@@ -283,7 +291,9 @@ echo.
 echo Starting DKTM Hot Restart Recovery...
 call X:\DKTM\dktm_recovery.cmd
 
-REM If script exits without rebooting, open command prompt
+REM 如果 recovery 没有触发 reboot（异常返回），才掉进命令列
+echo.
+echo [WARN] Recovery script returned (no reboot). Dropping to shell...
 cmd
 """
 
