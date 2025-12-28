@@ -96,7 +96,8 @@ class PlatformOps:
                 capture_output=True,
                 text=True,
                 check=check,
-                encoding="utf-8"
+                encoding="mbcs",
+                errors="replace"
             )
             return result.stdout
         except subprocess.CalledProcessError as exc:
