@@ -31,15 +31,18 @@ from typing import Optional
 class DKTMInstaller:
     """One-click DKTM installer."""
 
-    def __init__(self, skip_pe: bool = False):
+    def __init__(self, skip_pe: bool = False, transition_method: str = "auto"):
         """Initialize installer.
 
         Parameters
         ----------
         skip_pe : bool
             If True, skip WinPE build step.
+        transition_method : str
+            Transition method: "bcd", "winre", or "auto".
         """
         self.skip_pe = skip_pe
+        self.transition_method = transition_method
         self.logger = logging.getLogger("dktm.install")
         self.project_root = Path(__file__).parent
 
@@ -183,6 +186,37 @@ class DKTMInstaller:
             self.logger.error(f"✗ BCD setup failed: {exc}")
             return False
 
+    def ensure_config(self, transition_method: str) -> bool:
+        """Ensure a configuration file exists with transition settings."""
+        config_file = self.project_root / "dktm_config.yaml"
+        try:
+            import yaml
+        except ImportError:
+            self.logger.error("✗ PyYAML is required to write configuration")
+            return False
+
+        if config_file.exists():
+            with open(config_file, 'r') as f:
+                config = yaml.safe_load(f) or {}
+        else:
+            config = {}
+
+        executor = config.setdefault("executor", {})
+        executor.setdefault("winpe_entry_ids", [])
+        executor.setdefault("marker_path", r"C:\DKTM\dktm_transition.marker")
+        executor.setdefault("mode", "dry-run")
+        executor["transition_method"] = transition_method
+        executor.setdefault("fallback_method", "winre")
+
+        try:
+            with open(config_file, 'w') as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            self.logger.info("✓ Configuration updated")
+            return True
+        except Exception as exc:
+            self.logger.error(f"✗ Could not save configuration: {exc}")
+            return False
+
     def verify_installation(self) -> bool:
         """Verify installation.
 
@@ -217,12 +251,16 @@ class DKTMInstaller:
             with open(config_file, 'r') as f:
                 config = yaml.safe_load(f)
 
-            winpe_guids = config.get("executor", {}).get("winpe_entry_ids", [])
-            if not winpe_guids:
+            executor_config = config.get("executor", {})
+            transition_method = executor_config.get("transition_method", "auto")
+            winpe_guids = executor_config.get("winpe_entry_ids", [])
+            if transition_method != "winre" and not winpe_guids:
                 self.logger.error("✗ No WinPE GUID in configuration")
                 return False
 
-            self.logger.info(f"  WinPE GUID: {winpe_guids[0]}")
+            if winpe_guids:
+                self.logger.info(f"  WinPE GUID: {winpe_guids[0]}")
+            self.logger.info(f"  Transition method: {transition_method}")
 
         except Exception as exc:
             self.logger.error(f"✗ Could not verify configuration: {exc}")
@@ -247,12 +285,27 @@ class DKTMInstaller:
             ("Checking prerequisites", self.check_prerequisites),
             ("Creating directories", self.create_directories),
             ("Building WinPE", self.build_winpe),
-            ("Setting up BCD", self.setup_bcd),
+            ("Setting up transition", self.setup_bcd),
             ("Verifying installation", self.verify_installation),
         ]
 
         for step_name, step_func in steps:
             self.logger.info(f"\n>>> {step_name}...")
+            if step_name == "Setting up transition":
+                if self.transition_method == "winre":
+                    self.logger.info("Skipping BCD setup (transition_method=winre)")
+                    if not self.ensure_config("winre"):
+                        self.logger.error("\n✗ Installation failed at: Setting up transition")
+                        return 1
+                    continue
+                if self.transition_method == "auto":
+                    if step_func():
+                        continue
+                    self.logger.warning("BCD setup failed; falling back to WinRE")
+                    if not self.ensure_config("winre"):
+                        self.logger.error("\n✗ Installation failed at: Setting up transition")
+                        return 1
+                    continue
             if not step_func():
                 self.logger.error(f"\n✗ Installation failed at: {step_name}")
                 return 1
@@ -285,6 +338,12 @@ def main():
         action="store_true",
         help="Enable verbose logging"
     )
+    parser.add_argument(
+        "--transition-method",
+        choices=["auto", "bcd", "winre"],
+        default="auto",
+        help="Transition method: auto (default), bcd, or winre"
+    )
 
     args = parser.parse_args()
 
@@ -295,7 +354,10 @@ def main():
     )
 
     # Run installer
-    installer = DKTMInstaller(skip_pe=args.skip_pe)
+    installer = DKTMInstaller(
+        skip_pe=args.skip_pe,
+        transition_method=args.transition_method
+    )
     return installer.install()
 
 

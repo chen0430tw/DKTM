@@ -33,7 +33,9 @@ def commit_transition(
     winpe_entry_ids: List[str],
     marker_path: str,
     auto_reboot: bool,
-    dry_run: bool = False
+    dry_run: bool = False,
+    transition_method: str = "bcd",
+    fallback_method: str = "winre",
 ) -> None:
     """Commit a transition to a secondary environment.
 
@@ -58,7 +60,11 @@ def commit_transition(
         marker_path=marker_path,
         dry_run=dry_run
     )
-    ops.commit_transition(auto_reboot=auto_reboot)
+    ops.commit_transition(
+        auto_reboot=auto_reboot,
+        transition_method=transition_method,
+        fallback_method=fallback_method,
+    )
 
 
 def rollback_transition(

@@ -64,6 +64,8 @@ class Executor:
         self.auto_reboot: bool = config.get("auto_reboot", False)
         self.winpe_entry_ids: List[str] = list(config.get("winpe_entry_ids", []))
         self.marker_path: str = config.get("marker_path", "dktm_transition.marker")
+        self.transition_method: str = config.get("transition_method", "auto")
+        self.fallback_method: str = config.get("fallback_method", "winre")
         self.logger = logging.getLogger("dktm.executor")
 
     # ------------------------------------------------------------------
@@ -137,7 +139,9 @@ class Executor:
                 winpe_entry_ids=self.winpe_entry_ids,
                 marker_path=self.marker_path,
                 auto_reboot=self.auto_reboot,
-                dry_run=dry_run
+                dry_run=dry_run,
+                transition_method=self.transition_method,
+                fallback_method=self.fallback_method,
             )
             return True
         elif command == "rollback_transition":

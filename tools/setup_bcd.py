@@ -308,6 +308,8 @@ class BCDConfigurator:
         config['executor']['winpe_entry_ids'] = [self.winpe_guid]
         config['executor']['marker_path'] = r"C:\DKTM\dktm_transition.marker"
         config['executor']['mode'] = "dry-run"  # Safe default
+        config['executor']['transition_method'] = "bcd"
+        config['executor']['fallback_method'] = "winre"
 
         # Write configuration
         try:
