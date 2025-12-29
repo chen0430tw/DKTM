@@ -31,7 +31,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 import math  # Needed for tanh in flush()
 
-from spark_seed_sosa import SparkSeedSOSA, Event, BinaryTwin
+from .spark_seed_sosa import SparkSeedSOSA, Event, BinaryTwin
 
 
 # ---------------------------------------------------------------------
