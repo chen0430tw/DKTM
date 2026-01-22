@@ -56,12 +56,14 @@ class PlatformOps:
             self.marker_path,
             auto_reboot,
         )
-        # Write marker file
+        # Write marker file with secure permissions
         if self.marker_path and not self.dry_run:
             try:
-                with open(self.marker_path, "w", encoding="utf-8") as f:
+                # Create file with secure permissions (owner read/write only)
+                fd = os.open(self.marker_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write("pending_transition")
-                self.logger.debug("Marker file written to %s", self.marker_path)
+                self.logger.debug("Marker file written to %s with secure permissions", self.marker_path)
             except Exception as exc:
                 self.logger.error("Failed to write marker file %s: %s", self.marker_path, exc)
         elif self.dry_run:
