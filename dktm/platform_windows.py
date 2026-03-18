@@ -70,6 +70,238 @@ class PlatformOps:
             self.logger.warning("Could not check admin privileges: %s", exc)
             return False
 
+    # ------------------------------------------------------------------
+    # BCD file helpers (fallback when bcdedit is blocked)
+    # ------------------------------------------------------------------
+    _BOOTMGR_GUID = "{9dea862c-5cdd-4e70-acc1-f32b344d4795}"
+    _BCD_FILE_PATH = r"C:\Boot\BCD"
+    _TMP_HIVE = r"HKLM\TmpDKTM"
+    _BOOTSEQUENCE_ELEM = "24000002"
+
+    def _bcd_file_available(self) -> bool:
+        """Return True if C:\\Boot\\BCD is present and readable."""
+        return os.path.isfile(self._BCD_FILE_PATH)
+
+    def _guid_to_binary_hex(self, guid_str: str) -> str:
+        """Convert a GUID string to 16-byte Windows binary hex (little-endian fields).
+
+        Windows GUID binary layout:
+          Data1 (4 B, LE) | Data2 (2 B, LE) | Data3 (2 B, LE) | Data4 (8 B, BE)
+        """
+        g = guid_str.strip("{}").replace("-", "")
+        d1 = bytes.fromhex(g[0:8])[::-1].hex()
+        d2 = bytes.fromhex(g[8:12])[::-1].hex()
+        d3 = bytes.fromhex(g[12:16])[::-1].hex()
+        d4 = g[16:32]  # already big-endian
+        return d1 + d2 + d3 + d4
+
+    def _enable_backup_restore_privileges(self) -> None:
+        """Enable SeBackupPrivilege and SeRestorePrivilege on the current process token.
+
+        These privileges allow reading and writing registry keys regardless of
+        the key's DACL, which is required to modify the BCD hive.
+        """
+        import ctypes
+        import ctypes.wintypes
+
+        advapi32 = ctypes.windll.advapi32
+        kernel32 = ctypes.windll.kernel32
+
+        advapi32.OpenProcessToken.argtypes = [
+            ctypes.c_void_p,
+            ctypes.wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        advapi32.OpenProcessToken.restype = ctypes.wintypes.BOOL
+
+        token = ctypes.c_void_p()
+        if not advapi32.OpenProcessToken(-1, 0x0028, ctypes.byref(token)):
+            raise RuntimeError(
+                f"OpenProcessToken failed: {kernel32.GetLastError()}"
+            )
+
+        class _LUID(ctypes.Structure):
+            _fields_ = [
+                ("LowPart", ctypes.wintypes.DWORD),
+                ("HighPart", ctypes.wintypes.LONG),
+            ]
+
+        class _LA(ctypes.Structure):
+            _fields_ = [("Luid", _LUID), ("Attributes", ctypes.wintypes.DWORD)]
+
+        class _TP(ctypes.Structure):
+            _fields_ = [
+                ("Count", ctypes.wintypes.DWORD),
+                ("Privs", _LA * 2),
+            ]
+
+        tp = _TP()
+        tp.Count = 2
+        for i, name in enumerate(("SeBackupPrivilege", "SeRestorePrivilege")):
+            advapi32.LookupPrivilegeValueW(None, name, ctypes.byref(tp.Privs[i].Luid))
+            tp.Privs[i].Attributes = 0x00000002  # SE_PRIVILEGE_ENABLED
+
+        advapi32.AdjustTokenPrivileges(token.value, False, ctypes.byref(tp), 0, None, None)
+        kernel32.CloseHandle(token)
+
+    def _reg_write_bcd_bootsequence(self, winpe_guid: str) -> None:
+        """Write bootsequence via winreg with REG_OPTION_BACKUP_RESTORE."""
+        import ctypes
+        import winreg
+
+        advapi32 = ctypes.windll.advapi32
+        advapi32.RegCreateKeyExW.argtypes = [
+            ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_wchar_p,
+            ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_ulong),
+        ]
+        advapi32.RegCreateKeyExW.restype = ctypes.c_long
+        advapi32.RegSetValueExW.argtypes = [
+            ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_ulong,
+            ctypes.c_ulong, ctypes.c_char_p, ctypes.c_ulong,
+        ]
+        advapi32.RegSetValueExW.restype = ctypes.c_long
+
+        # Hive root is the short name under HKLM (without "HKLM\")
+        hive_short = self._TMP_HIVE[len("HKLM\\"):]
+        bootmgr = "{" + self._BOOTMGR_GUID.strip("{}") + "}"
+        subkey = (
+            f"{hive_short}\\Objects\\{bootmgr}"
+            f"\\Elements\\{self._BOOTSEQUENCE_ELEM}"
+        )
+        normalized = "{" + winpe_guid.strip("{}") + "}"
+        data = bytes.fromhex(self._guid_to_binary_hex(normalized))
+
+        hkey = ctypes.c_void_p()
+        disp = ctypes.c_ulong()
+        ret = advapi32.RegCreateKeyExW(
+            ctypes.c_void_p(0x80000002),  # HKEY_LOCAL_MACHINE
+            subkey,
+            0, None,
+            4,          # REG_OPTION_BACKUP_RESTORE – bypasses DACL
+            0x0006,     # KEY_SET_VALUE | KEY_CREATE_SUB_KEY
+            None,
+            ctypes.byref(hkey), ctypes.byref(disp),
+        )
+        if ret != 0:
+            raise RuntimeError(f"RegCreateKeyExW failed: {ret}")
+
+        ret = advapi32.RegSetValueExW(hkey.value, "Element", 0, 3, data, len(data))
+        advapi32.RegCloseKey(hkey.value)
+        if ret != 0:
+            raise RuntimeError(f"RegSetValueExW failed: {ret}")
+
+    def _reg_delete_bcd_bootsequence(self) -> None:
+        """Delete bootsequence element via winreg with REG_OPTION_BACKUP_RESTORE."""
+        import ctypes
+
+        advapi32 = ctypes.windll.advapi32
+        advapi32.RegOpenKeyExW.argtypes = [
+            ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_ulong,
+            ctypes.c_ulong, ctypes.POINTER(ctypes.c_void_p),
+        ]
+        advapi32.RegOpenKeyExW.restype = ctypes.c_long
+        advapi32.RegDeleteKeyW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        advapi32.RegDeleteKeyW.restype = ctypes.c_long
+
+        hive_short = self._TMP_HIVE[len("HKLM\\"):]
+        bootmgr = "{" + self._BOOTMGR_GUID.strip("{}") + "}"
+        parent_subkey = f"{hive_short}\\Objects\\{bootmgr}\\Elements"
+
+        hparent = ctypes.c_void_p()
+        ret = advapi32.RegOpenKeyExW(
+            ctypes.c_void_p(0x80000002),
+            parent_subkey,
+            4,          # REG_OPTION_BACKUP_RESTORE
+            0x000F003F, # KEY_ALL_ACCESS
+            ctypes.byref(hparent),
+        )
+        if ret != 0:
+            self.logger.warning("Could not open Elements key for delete: %d", ret)
+            return
+
+        r = advapi32.RegDeleteKeyW(hparent.value, self._BOOTSEQUENCE_ELEM)
+        advapi32.RegCloseKey(hparent.value)
+        if r != 0:
+            self.logger.warning("RegDeleteKeyW returned: %d (element may not exist)", r)
+
+    def _commit_via_bcd_file(self, winpe_guid: str) -> None:
+        """Set bootsequence by directly editing C:\\Boot\\BCD.
+
+        Process: enable privileges → reg load → winreg write → reg unload.
+        The hive is always unloaded, even if writing fails.
+
+        Parameters
+        ----------
+        winpe_guid : str
+            BCD entry GUID for the WinPE environment, e.g.
+            ``{e18e67af-6278-11e6-a822-9a545abf3b29}``.
+
+        Raises
+        ------
+        RuntimeError
+            If the hive cannot be loaded or the element write fails.
+        """
+        self.logger.info("Using direct BCD file method (bcdedit not available)")
+        self._enable_backup_restore_privileges()
+
+        r = subprocess.run(
+            ["reg", "load", self._TMP_HIVE, self._BCD_FILE_PATH],
+            capture_output=True, encoding="mbcs", errors="replace"
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"reg load BCD failed: {r.stderr.strip()}")
+        self.logger.info("✓ BCD hive loaded")
+
+        success = False
+        try:
+            normalized = "{" + winpe_guid.strip("{}") + "}"
+            bootmgr = "{" + self._BOOTMGR_GUID.strip("{}") + "}"
+            self._reg_write_bcd_bootsequence(winpe_guid)
+            self.logger.info("✓ Bootsequence element written (%s → %s)", bootmgr, normalized)
+            success = True
+        finally:
+            subprocess.run(
+                ["reg", "unload", self._TMP_HIVE],
+                capture_output=True, encoding="mbcs", errors="replace"
+            )
+            if success:
+                self.logger.info("✓ BCD hive flushed and unloaded")
+            else:
+                self.logger.warning("BCD hive unloaded after write error")
+
+    def _rollback_via_bcd_file(self) -> None:
+        """Remove the bootsequence element from C:\\Boot\\BCD directly.
+
+        Raises
+        ------
+        RuntimeError
+            If the hive cannot be loaded.
+        """
+        self.logger.info("Removing bootsequence via direct BCD file method")
+        self._enable_backup_restore_privileges()
+
+        r = subprocess.run(
+            ["reg", "load", self._TMP_HIVE, self._BCD_FILE_PATH],
+            capture_output=True, encoding="mbcs", errors="replace"
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"reg load BCD failed: {r.stderr.strip()}")
+        self.logger.info("✓ BCD hive loaded")
+
+        try:
+            self._reg_delete_bcd_bootsequence()
+            self.logger.info("✓ Bootsequence element removed")
+        finally:
+            subprocess.run(
+                ["reg", "unload", self._TMP_HIVE],
+                capture_output=True, encoding="mbcs", errors="replace"
+            )
+            self.logger.info("✓ BCD hive unloaded")
+
+    # ------------------------------------------------------------------
+    # bcdedit / reagentc helpers
+    # ------------------------------------------------------------------
     def _run_bcdedit(self, args: List[str], check: bool = True) -> Optional[str]:
         """Execute bcdedit command.
 
@@ -219,18 +451,32 @@ class PlatformOps:
                 # Backup current bootsequence
                 self._backup_boot_config()
 
-                # Set one-time boot sequence
+                # Set one-time boot sequence — try bcdedit first, then BCD file
                 self.logger.info("Setting bootsequence to %s", entry_id)
+                bcd_set = False
                 try:
                     self._run_bcdedit(["/bootsequence", entry_id])
-                    self.logger.info("✓ Boot sequence set successfully")
+                    self.logger.info("✓ Boot sequence set via bcdedit")
+                    bcd_set = True
                 except Exception as exc:
-                    self.logger.error("Failed to set bootsequence: %s", exc)
+                    self.logger.warning("bcdedit failed (%s); trying direct BCD file", exc)
+
+                if not bcd_set:
+                    if self._bcd_file_available():
+                        try:
+                            self._commit_via_bcd_file(entry_id)
+                            bcd_set = True
+                        except Exception as exc2:
+                            self.logger.error("Direct BCD file method failed: %s", exc2)
+                    else:
+                        self.logger.warning("C:\\Boot\\BCD not found; cannot use file method")
+
+                if not bcd_set:
                     if transition_method == "auto" and fallback_method:
                         self.logger.warning("Falling back to %s transition method", fallback_method)
                         used_method = fallback_method
                     else:
-                        raise RuntimeError(f"BCD modification failed: {exc}")
+                        raise RuntimeError("All BCD modification methods failed")
 
         if used_method == "winre":
             self._set_winre_boot_once()
@@ -329,14 +575,25 @@ class PlatformOps:
             else:
                 raise RuntimeError(msg)
 
-        # Clear bootsequence override
+        # Clear bootsequence override — try bcdedit first, then BCD file
         self.logger.info("Clearing bootsequence override")
+        cleared = False
         try:
-            # Note: bcdedit /deletevalue {bootmgr} bootsequence also works
             self._run_bcdedit(["/deletevalue", "{bootmgr}", "bootsequence"])
-            self.logger.info("✓ Boot sequence override removed")
+            self.logger.info("✓ Boot sequence override removed via bcdedit")
+            cleared = True
         except Exception as exc:
-            self.logger.warning("Could not clear bootsequence: %s", exc)
+            self.logger.warning("bcdedit deletevalue failed (%s); trying direct BCD file", exc)
+
+        if not cleared and self._bcd_file_available():
+            try:
+                self._rollback_via_bcd_file()
+                cleared = True
+            except Exception as exc2:
+                self.logger.warning("Direct BCD file rollback failed: %s", exc2)
+
+        if not cleared:
+            self.logger.warning("Could not remove bootsequence override; it may expire on next boot")
 
         # Remove marker file
         if self.marker_path:
@@ -503,8 +760,9 @@ class PlatformOps:
         else:
             self.logger.info("✓ Disk space OK: %d MB free on %s", free_mb, sys_drive)
 
-        # 3. bcdedit accessible (only matters for real-run)
+        # 3. BCD access — prefer bcdedit; fall back to direct BCD file
         if not self.dry_run:
+            bcdedit_ok = False
             try:
                 subprocess.run(
                     ["bcdedit", "/enum", "{bootmgr}"],
@@ -512,8 +770,17 @@ class PlatformOps:
                     encoding="mbcs", errors="replace"
                 )
                 self.logger.info("✓ bcdedit accessible")
-            except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-                issues.append(f"bcdedit not accessible: {exc}")
+                bcdedit_ok = True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+
+            if not bcdedit_ok:
+                if self._bcd_file_available():
+                    self.logger.info(
+                        "✓ bcdedit not available; C:\\Boot\\BCD present (file method will be used)"
+                    )
+                else:
+                    issues.append("bcdedit not accessible and C:\\Boot\\BCD not found")
 
         if issues:
             for issue in issues:
