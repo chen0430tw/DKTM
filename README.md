@@ -1,240 +1,180 @@
-# DKTM - Dynamic Kernel Transition Mechanism
+# DKTM — Dynamic Kernel Transition Mechanism
 
-**一键热重启系统 - 无需完全重启即可重置 Windows 内核**
+一键热重启：进入 WinPE 重置 Windows 内核，WinPE 自动返回，全程无需手动操作。
 
-> "Jerry 探头看 Tom 走了没有，然后一键穿越到另一个世界" 🐭💨
-
----
-
-## 🎯 这是什么？
-
-DKTM 是一个**真正的一键热重启系统**，不是简单的 bcdedit 套壳。
-
-**一键热重启流程**：
-```
-按下按钮 → SOSA 智能探测 → 自动切 PE → 重置内核 → 自动回 Windows
-```
-
-**全程自动，无需手动操作**。
+专为 **bcdedit 被 ACL 封锁的受限环境**（如网咖）设计，通过直接写 BCD 文件绕过限制。
 
 ---
 
-## ✨ 核心特性
+## 工作原理
 
-### 🧠 SOSA 智能决策
-- **自研算法**：Jerry 式探测，实时监控系统压力
-- **安全评估**：E_mean < 0.5 才执行，确保系统安全
-- **自动决策**：不需要人工判断，系统自己知道什么时候可以重启
+```
+按下按钮
+   │
+   ├─ health check（权限 / WinPE / 磁盘）
+   ├─ 停止非必要服务（spooler / SysMain / WSearch）
+   ├─ 刷新磁盘缓冲区
+   ├─ [倒数 5 秒，可取消]
+   │
+   ├─ 写入 BCD bootsequence（一次性，用后自动清除）
+   ├─ 再次刷盘
+   └─ reboot
+          │
+          ▼
+   Boot Manager 读取 bootsequence → 引导 WinPE
+          │
+          ▼
+   WinPE startnet.cmd：wpeinit → wpeutil reboot
+          │
+          ▼
+   Boot Manager 自动清除 bootsequence → 引导回 Windows
+```
 
-### 🚀 一键热重启
-- **一个命令**：`python hot_restart.py`
-- **自动切换**：自动进入 WinPE → 重置内核 → 自动回主系统
-- **全自动化**：不需要手动配置 BCD、不需要手动重启
-
-### 🛡️ 安全机制
-- **Dry-Run 模式**：测试时不会真的重启
-- **自动备份**：BCD 配置自动备份，可回滚
-- **智能验证**：每步都有验证，失败自动中止
+**BCD 写入方式**：通过 `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` 绕过 `HKLM\BCD00000000` 的 ACL，无需 SYSTEM 权限，无需 bcdedit。
 
 ---
 
-## 📦 快速开始
+## 系统要求
 
-### 1. 系统要求
-
-- Windows 10/11 (64-bit)
-- 管理员权限
-- Python 3.7+
-- Windows ADK（会自动检测）
-
-### 2. 安装依赖
-
-```bash
-# 安装 Python 依赖
-pip install -r requirements.txt
-
-# 或手动安装
-pip install numpy pyyaml
-```
-
-### 3. 一键安装
-
-```bash
-# 以管理员身份运行
-python install.py
-```
-
-**安装过程自动完成**：
-- ✅ 自动构建 WinPE（集成 DKTM 恢复脚本）
-- ✅ 自动创建 BCD 条目
-- ✅ 自动配置系统
-- ✅ 自动验证安装
-
-### 4. 一键热重启
-
-```bash
-# 测试模式（不会真的重启）
-python hot_restart.py --dry-run
-
-# 真实执行（Jerry 出洞！）
-python hot_restart.py
-```
-
-**就这么简单！** 🎉
+- Windows 10/11 64-bit
+- 管理员权限（Administrator，非 SYSTEM）
+- Python 3.8+，仅需标准库 + `pyyaml`
+- WinPE 或 WinRE 环境（见下方配置）
 
 ---
 
-## 🔧 高级用法
+## 快速开始
 
-### 手动分步安装
-
-如果你想手动控制每一步：
+### 1. 安装依赖
 
 ```bash
-# 1. 构建 WinPE
-python tools/build_pe.py --deploy
+pip install pyyaml
+```
 
-# 2. 配置 BCD
-python tools/setup_bcd.py --save-config
+### 2. 配置 WinPE（首次使用，每台机器做一次）
 
-# 3. 验证配置
+**方案 A：用系统自带 WinRE（零配置，推荐先试）**
+
+系统若有 WinRE，程序会自动发现，无需任何配置。验证：
+
+```bash
 python hot_restart.py --dry-run
 ```
 
-### 强制执行（跳过安全检查）
+日志中出现 `Auto-discovered BCD entries` 且列表非空即可。
+
+**方案 B：添加干净 WinPE（已安装 Windows ADK）**
 
 ```bash
-# 不推荐！除非你知道自己在做什么
-python hot_restart.py --force
+# 1. 用 ADK copype 构建 WinPE 工作目录
+python C:\Users\Administrator\run_copype.py
+
+# 2. 把干净 WinPE 写入系统 BCD（一次性）
+python C:\Users\Administrator\bcd_add_winpe.py
 ```
 
-### 使用自定义配置
+完成后，程序自动优先使用干净 WinPE（`{7619dcc9-fafe-11d9-b411-000476eba25f}`），以 WinRE 为 fallback。
+
+### 3. 使用
+
+**图形界面（推荐）**
 
 ```bash
-python hot_restart.py --config my_config.yaml
+python gui.py
+```
+
+**命令行**
+
+```bash
+python hot_restart.py          # 正式执行（有 5 秒取消窗口）
+python hot_restart.py --force  # 跳过确认直接执行
+python hot_restart.py --dry-run  # 模拟，不做任何系统变更
 ```
 
 ---
 
-## 📚 工作原理
+## 配置文件
 
-### 架构图
+`config.yaml`（留空 `winpe_entry_ids` 则自动发现）：
 
-```
-┌─────────────────────────────────────────────────┐
-│  用户按下按钮 (python hot_restart.py)          │
-└───────────────────┬─────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────────────┐
-│  SOSA 智能探测 (Jerry 探头)                    │
-│  - 采集系统状态                                 │
-│  - 计算 E_mean (系统压力)                       │
-│  - 决定是否安全                                 │
-└───────────────────┬─────────────────────────────┘
-                    ↓
-         [安全?] ━━━━━━━━━━━┓
-            ↓ 是             ↓ 否
-┌─────────────────────┐   ┌────────────────┐
-│  自动切换到 PE      │   │  中止操作      │
-│  - 设置 BCD         │   │  等待更好时机  │
-│  - 触发重启         │   └────────────────┘
-└──────────┬──────────┘
-           ↓
-┌─────────────────────────────────────────────────┐
-│  WinPE 自动执行 (在 PE 环境中)                 │
-│  - 清除缓存                                     │
-│  - 重置网络栈                                   │
-│  - 验证系统完整性                               │
-│  - 清除 bootsequence                            │
-└───────────────────┬─────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────────────┐
-│  自动回到 Windows                               │
-│  - PE 清除一次性启动配置                        │
-│  - 自动重启                                     │
-│  - 启动回主系统                                 │
-└─────────────────────────────────────────────────┘
+```yaml
+executor:
+  mode: real-run
+  auto_reboot: false
+  transition_method: auto   # auto | bcd | winre
+  fallback_method: winre
+  marker_path: "C:\\dktm_transition.marker"
+  winpe_entry_ids: []       # 空 = 运行时从 BCD 自动发现
 ```
 
-### 与简单的 bcdedit 脚本的区别
+如需固定 GUID，手动填入：
 
-| 特性 | bcdedit 脚本 | DKTM |
-|------|-------------|------|
-| **智能决策** | ❌ 无 | ✅ SOSA 算法自动判断 |
-| **自动化** | ❌ 需要手动操作 | ✅ 一键完成 |
-| **安全性** | ❌ 无检查 | ✅ 多重安全验证 |
-| **PE 生成** | ❌ 手动构建 | ✅ 自动生成 |
-| **自动恢复** | ❌ 手动回退 | ✅ PE 自动清除 BCD |
-| **状态监控** | ❌ 盲目执行 | ✅ 实时系统状态分析 |
-
-**DKTM 不是套壳，而是完整的自动化系统**。
+```yaml
+  winpe_entry_ids:
+    - "{7619dcc9-fafe-11d9-b411-000476eba25f}"  # 干净 WinPE
+    - "{300209a8-6279-11e6-90e0-000c295c2276}"  # WinRE（机器相关）
+```
 
 ---
 
-## 📁 项目结构
+## 安全机制
+
+| 机制 | 说明 |
+|------|------|
+| BCD 备份 | 写入前 `BCD → BCD.dktm.bak` |
+| 写后稽核 | 验证 bootmgr / displayorder / bootsequence 三个不变量 |
+| 稽核失败自动还原 | 从 `.bak` 覆盖回 `BCD`，抛出异常终止流程 |
+| 一次性 bootsequence | Boot Manager 使用后自动清除，即使 WinPE 崩溃也不会死循环 |
+| GUI 取消零代价 | 倒数阶段 BCD 尚未写入，取消不需要任何回滚 |
+| 提交失败自动回滚 | 写 BCD 异常时自动调用 rollback_transition |
+
+---
+
+## 项目结构
 
 ```
 DKTM/
-├── install.py              # 一键安装脚本
-├── hot_restart.py          # 一键热重启脚本 ⭐
-├── dktm_config.yaml        # 配置文件（安装后生成）
-├── dktm/                   # 核心包
-│   ├── adapter.py          # SOSA 适配器
-│   ├── executor.py         # 执行器
-│   ├── platform_windows.py # Windows 平台操作
-│   ├── retina_probe.py     # 状态探测器
-│   └── spark_seed_sosa.py  # SOSA 算法
-├── tools/                  # 工具脚本
-│   ├── build_pe.py         # 自动 PE 生成器
-│   └── setup_bcd.py        # BCD 自动配置器
-└── docs/                   # 文档
-    └── WINPE_BUILD_GUIDE.md
+├── gui.py                  # 图形界面（推荐入口）
+├── hot_restart.py          # 命令行入口
+├── config.yaml             # 配置文件
+├── dktm/
+│   ├── platform_windows.py # BCD 写入 / 权限 / 服务 / 磁盘刷新
+│   ├── platform_posix.py   # POSIX 占位（dry-run 用）
+│   ├── platform_ops.py     # 平台抽象层
+│   ├── executor.py         # 命令执行器
+│   └── config.py           # 配置加载 / 合并
+├── docs/
+│   ├── cafe_env_analysis.md  # 网咖环境调研（BCD ACL / 权限 / 重置机制）
+│   └── WINPE_BUILD_GUIDE.md
+└── tools/
+    ├── build_pe.py         # WinPE 构建辅助
+    └── setup_bcd.py        # BCD 配置辅助
 ```
 
 ---
 
-## 💬 常见问题
+## 常见问题
 
-**Q: 这和直接在终端输入 bcdedit 有什么区别？**
+**bcdedit 报权限错误？**
 
-A: 区别大了！
+正常现象。`HKLM\BCD00000000` 的 ACL 只允许 SYSTEM 写入，Administrator 也被拒。
+DKTM 通过 `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` + `SeRestorePrivilege` 绕过，无需 bcdedit。
 
-1. **智能决策**：SOSA 算法自动判断是否安全，bcdedit 不管
-2. **自动化**：一个命令完成所有步骤，bcdedit 需要手动操作每一步
-3. **自动恢复**：PE 自动清理并回到主系统，bcdedit 需要手动回退
-4. **PE 生成**：自动构建和注入，bcdedit 需要手动搞定 WinPE
+**如何确认 WinPE 会自动返回 Windows？**
 
-**DKTM 是完整的自动化系统，不是套壳脚本**。
-
----
-
-**Q: 为什么不直接写 PE 的壳？**
-
-A: **我们做的就是自动生成 PE**！
-
-`tools/build_pe.py` 自动化了整个 PE 生成过程：
-- 自动调用 ADK
-- 自动注入 DKTM 脚本
-- 自动配置 BCD
-
-你不需要手动操作任何 WinPE 构建步骤。
-
----
-
-**Q: 真的是一键吗？**
-
-A: **是的！**
-
-```bash
-# 安装（只需一次）
-python install.py
-
-# 以后每次热重启
-python hot_restart.py
+干净 WinPE 的 `startnet.cmd` 内容为：
+```bat
+@echo off
+wpeinit
+wpeutil reboot
 ```
+wpeinit 完成后立刻重启，Boot Manager 因 bootsequence 已被自动清除，直接引导回 Windows。
 
-就这两个命令。
+**重启后没有进 WinPE？**
 
----
+运行 `python hot_restart.py --dry-run` 确认日志中有 `Auto-discovered BCD entries` 且非空。
+若为空，运行 `bcd_add_winpe.py` 添加 WinPE 条目，或确认系统有启用的 WinRE（`reagentc /info`）。
 
-**Enjoy your hot restart! 🔥**
+**网咖环境能用吗？**
+
+可以，DKTM 最初就是为网咖设计的。参见 [`docs/cafe_env_analysis.md`](docs/cafe_env_analysis.md) 了解详细的环境分析和安全性评估。
