@@ -238,7 +238,7 @@ Windows 核心啓動
 
 ## 八、待辦事項
 
-- [ ] 將乾淨 WinPE（`C:\DKTM_PE\media\sources\boot.wim`）加入系統 BCD
-- [ ] 在 `boot.wim` 中加入 `startnet.cmd` 自動重啓腳本（`wpeutil reboot`），讓 WinPE 無人工介入直接返回
-- [ ] 更新 `config.yaml`：乾淨 WinPE 為主，WinRE（`{300209a8-...}`）為 fallback
-- [ ] 優化熱重啓流程：health_check 前移到所有操作之前，合并冗餘的 flush 調用，縮短等待時間
+- [x] 將乾淨 WinPE 加入系統 BCD — `{7619dcc9-fafe-11d9-b411-000476eba25f}`（WIM 放置於 `C:\Recovery\WindowsRE\winpe.wim`）
+- [x] 在 `boot.wim` 中加入 `startnet.cmd`：`wpeinit` → `wpeutil reboot`，WinPE 啓動後自動重啓返回 Windows
+- [x] 更新 `config.yaml`：乾淨 WinPE 為主，WinRE（`{300209a8-...}`）為 fallback
+- [x] 優化熱重啓流程：health_check 前移到第一步，去除冗餘 flush_io 調用，重啓倒數支持 Ctrl+C 中斷並自動回滾
