@@ -44,43 +44,45 @@ class HotRestartOrchestrator:
         self.executor = Executor(self.config.get("executor", {}))
 
     def prepare_transition(self):
-        self.logger.info("\n🔧 Preparing system for transition...")
+        self.logger.info("\n Preparing system for transition...")
 
-        self.logger.info("   [1/3] Quiescing services...")
-        self.executor.run_command("freeze_services")
-
-        self.logger.info("   [2/3] Flushing I/O buffers...")
-        self.executor.run_command("flush_io")
-        self.executor.run_command("flush_buffers")
-
-        self.logger.info("   [3/3] Final health check...")
+        self.logger.info("   [1/3] Health check...")
         self.executor.run_command("health_check")
 
-        self.logger.info("✅ System prepared for transition")
+        self.logger.info("   [2/3] Quiescing services...")
+        self.executor.run_command("freeze_services")
+
+        self.logger.info("   [3/3] Flushing I/O buffers...")
+        self.executor.run_command("flush_buffers")
+
+        self.logger.info("System prepared for transition")
         return True
 
     def execute_hot_restart(self):
-        self.logger.info("\n🚀 Executing Hot Restart Sequence...")
+        self.logger.info("\n Executing Hot Restart Sequence...")
 
-        self.logger.info("   [1/4] Handing over control to WinPE...")
-        self.executor.run_command("handover_control")
-
-        self.logger.info("   [2/4] Setting one-time boot sequence...")
+        self.logger.info("   [1/3] Setting one-time boot sequence...")
         self.executor.run_command("commit_transition")
 
-        self.logger.info("   [3/4] Final synchronization...")
-        time.sleep(1)
+        self.logger.info("   [2/3] Final flush...")
+        self.executor.run_command("flush_buffers")
 
-        self.logger.info("   [4/4] Initiating reboot to WinPE...")
+        self.logger.info("   [3/3] Initiating reboot to WinPE...")
         self.logger.info("\n" + "=" * 60)
-        self.logger.info("  🔄 System will now reboot into WinPE")
-        self.logger.info("  ⚙️  WinPE will perform kernel reset")
-        self.logger.info("  🔙 System will automatically return to Windows")
+        self.logger.info("  System will now reboot into WinPE")
+        self.logger.info("  WinPE will auto-reboot back to Windows")
         self.logger.info("=" * 60)
 
         if not self.dry_run:
-            self.logger.info("\nRebooting in 5 seconds...")
-            time.sleep(5)
+            self.logger.info("\nPress Ctrl+C within 5 seconds to abort...")
+            try:
+                for i in range(5, 0, -1):
+                    self.logger.info("  Rebooting in %d...", i)
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                self.logger.warning("\nAborted by user — rolling back bootsequence...")
+                self.executor.run_command("rollback_transition")
+                return False
 
         self.executor.run_command("reboot")
         return True

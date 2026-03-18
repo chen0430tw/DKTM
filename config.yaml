@@ -5,4 +5,7 @@ executor:
   fallback_method: winre
   marker_path: "C:\\dktm_transition.marker"
   winpe_entry_ids:
+    # Primary: clean WinPE (ADK copype, startnet.cmd runs wpeutil reboot)
+    - "{7619dcc9-fafe-11d9-b411-000476eba25f}"
+    # Fallback: WinRE (already in BCD, used if clean WinPE fails)
     - "{300209a8-6279-11e6-90e0-000c295c2276}"
