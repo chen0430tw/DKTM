@@ -1,6 +1,6 @@
 # 網咖環境調研報告
 
-> 調研日期：2026-03-18
+> 調研日期：2026-03-18（磁盤保護機制補充：2026-03-19）
 > 機器 IP：192.168.10.39
 > 系統：Windows 10 Enterprise 2016 LTSB (10.0.19045)
 > 運行身份：Administrator（High Mandatory Level）
@@ -22,7 +22,7 @@
 
 `boot.bat` 在開機時按順序執行補丁目錄下的所有 `.reg` 和 `.exe`，只做環境初始化，不恢復磁盤狀態。
 
-### 1.2 Smart Cyber Cafe（CoffeeNet）— 計費系統
+### 1.2 Smart Cyber Cafe（Wameng / 維盟）— 計費 + 磁盤保護系統
 
 ```
 C:\Program Files (x86)\Wameng\Smart Cyber Cafe - Client\
@@ -30,7 +30,19 @@ C:\Program Files (x86)\Wameng\Smart Cyber Cafe - Client\
   CoffeeNet.exe  ← 計費/計時主程序（TCP 6700/6702）
 ```
 
-管理服務器：`192.168.10.252`，負責計時、鎖定、帳號管理。
+計費服務器：`192.168.10.252`，負責計時、鎖定、帳號管理。
+
+**磁盤保護子系統（無盤客戶端）**：
+
+| 驅動 | 路徑 | 版本 | 作用 |
+|------|------|------|------|
+| `KScsiDisk64.sys` | `C:\Windows\System32\drivers\` | 2025.6.15 | 虛擬 SCSI 磁盤驅動，將服務器鏡像掛載為本地磁盤 |
+| `kdisk64.sys` | `C:\Windows\System32\drivers\` | 2025.6.15 | 寫過濾驅動，攔截所有寫入並重定向至 RAM 緩衝區 |
+| `ramdisk.sys` | `C:\Windows\System32\drivers\` | Windows 內建 | RAM 磁盤驅動，充當寫緩衝區存儲介質 |
+
+鏡像服務器：`192.168.2.251:11560`（獨立於計費服務器的專用無盤服務器）。
+
+注冊表確認：`HKLM\SYSTEM\CurrentControlSet\Services\KScsiDisk\param` → `IsThirdpartyDiskless = 1`
 
 ### 1.3 lwdeploy（lw 系列）— 系統管理平台
 
@@ -78,6 +90,10 @@ Windows 核心啓動
     │    B:\lwclient64\lwclient64.exe
     │    └─ 連線 192.168.10.242 / 192.168.10.243
     │
+    ├─ [引導期] KScsiDisk (BOOT_START, SCSI Miniport)
+    │    連線 192.168.2.251:11560，將服務器鏡像掛載為虛擬 SCSI 磁盤
+    │    kdisk 寫過濾層啓動，後續所有寫入進入 RAM 緩衝區（~42 GB）
+    │
     ├─ [服務自啓] SmartSAMD (Kernel Driver, DEMAND_START)
     │    \SystemRoot\System32\drivers\SmartSAMD.sys
     │
@@ -93,7 +109,7 @@ Windows 核心啓動
          gwloader.exe       → 遊戲啓動入口（GetwayMi 菜單）
 ```
 
-**關鍵觀察**：沒有開機時自動觸發磁盤還原的步驟。lwdeploy 的重鏡像由服務器端主動推送，不在本機開機流程中。
+**關鍵觀察**：KScsiDisk 在 BOOT_START 階段（早於用戶空間）即接管磁盤 I/O，kdisk 寫過濾層同步啓動，整個用戶會話期間的磁盤寫入全部在 RAM 中。還原發生在重啓時——RAM 清空，重新從服務器掛載乾淨鏡像。
 
 ---
 
@@ -101,32 +117,61 @@ Windows 核心啓動
 
 | 盤符 | 卷標 | 容量 | 用途 |
 |------|------|------|------|
-| `B:` | userdisk | 100 GB | lwdeploy 客戶端 + 用戶設置 |
-| `C:` | （系統盤） | 100 GB | Windows 系統、遊戲管理工具 |
-| `D:` | Games1 | 56 TB | 遊戲主存儲 |
+| `B:` | userdisk | 100 GB | **KScsiDisk 虛擬磁盤**（無盤客戶端，源自服務器 192.168.2.251），lwdeploy 客戶端運行於此 |
+| `C:` | （系統盤） | 100 GB | Windows 系統（**所有寫入均被 kdisk 攔截至 RAM，重啓後還原**）|
+| `D:` | Games1 | 56 TB | 遊戲主存儲（本地物理磁盤，不受 kdisk 保護，寫入持久化）|
 | `E:` | KINGSTON | 124 GB | 外接 USB 設備 |
-| `H:` | Games4 | 14 TB | 遊戲擴展存儲 |
+| `H:` | Games4 | 14 TB | 遊戲擴展存儲（本地物理磁盤，寫入持久化）|
 
-`B:` 盤獨立於系統盤，存放 lwdeploy 客戶端，推測重鏡像時不受影響，確保管理連接在重置後依然存在。
+`B:` 盤是 KScsiDisk 虛擬出的網絡磁盤，不顯示在 `Get-Volume` / `Get-Disk` 的物理磁盤列表中（無分區表入口），由驅動直接向用戶空間呈現文件系統。lwdeploy 客戶端部署於此，推測服務器側鏡像更新時 B: 作為管理通道被單獨維護、不參與還原。
 
 ---
 
 ## 四、環境重置機制
 
-### 4.1 結論：網絡重鏡像，無本地磁盤保護
+### 4.1 ~~結論：網絡重鏡像，無本地磁盤保護~~ → 【修正】無盤客戶端 + RAM 寫緩衝
 
-逐一排查常見網咖保護方案：
+> ⚠️ **本節初版結論錯誤，已於 2026-03-19 根據實測數據修正。**
+>
+> 初版調研時排查了常見本地保護方案（Deep Freeze / ShadowUser / 冰點還原等）均未發現，因此誤判為「無本地保護」。實際上 Wameng 的磁盤保護通過**自定義驅動棧**實現，不屬於上述任何已知方案，因此漏查。
 
-| 方案 | 調查方法 | 結果 |
-|------|---------|------|
-| Deep Freeze | 驅動列表、進程列表 | ❌ 不存在 |
-| ShadowUser / Shadow Protect | 驅動列表 | ❌ 不存在 |
-| 冰點還原 / Reboot Restore Rx | 驅動列表 | ❌ 不存在 |
-| NTFS 過濾驅動（寫保護） | `fltMC filters` | ❌ 僅標準 Windows 過濾器 |
-| Volume Shadow Copy | `vssadmin list shadows` | ❌ 無任何快照 |
-| AppLocker / SRP | 注冊表策略鍵 | ❌ 未部署 |
+**實際機制：無盤客戶端（Diskless Client）+ RAM 寫過濾**
 
-**實際機制**：`lwcopy_win10.exe` + `kpowershutdown64.sys`，由管理服務器（192.168.10.242/243）決定何時推送鏡像。**不是每次重啓都觸發**，屬管理員手動操作或定時排程。
+```
+服務器（192.168.2.251）持有系統鏡像
+    │
+    │  開機時通過專有協議（:11560）傳輸
+    ▼
+KScsiDisk64.sys 將鏡像掛載為虛擬 SCSI 磁盤（B: / C:）
+    │
+    ▼
+kdisk64.sys 寫過濾層攔截所有寫入
+    │
+    ▼
+ramdisk.sys RAM 緩衝區（實測佔用 ~42 GB / 64 GB）
+    │
+    │  重啓時
+    ▼
+RAM 清空，KScsiDisk 重新從服務器掛載乾淨鏡像 → 系統還原
+```
+
+**內存佔用分析**（實測，63.6 GB 機器）：
+
+| 類別 | 佔用 |
+|------|------|
+| 所有進程 Working Set | ~2.8 GB |
+| Standby Cache（可回收）| ~4.0 GB |
+| Paged Pool | ~3.9 GB |
+| Non-Paged Pool | ~4.4 GB |
+| **kdisk RAM 寫緩衝區** | **~42 GB** |
+| 合計 | ~57 GB（89.9%）|
+
+**還原時機**：每次重啓均觸發（RAM 清空 = 自動還原），無需服務器端主動推送。lwdeploy 的網絡重鏡像（`lwcopy_win10.exe`）是另一套機制，用於更新服務器側的原始鏡像，與日常開關機的自動還原無關。
+
+**寫入持久化範圍**：
+- `C:`（系統盤）→ kdisk 保護，重啓後還原
+- `B:`（userdisk）→ kdisk 保護，推測同樣還原
+- `D:` / `H:`（遊戲數據盤）→ 本地物理磁盤，**不受 kdisk 保護，寫入持久化**
 
 ### 4.2 bcdedit 被封鎖的根本原因
 
@@ -216,7 +261,8 @@ Windows 核心啓動
 | 風險項 | 評估 | 對策 |
 |--------|------|------|
 | bcdedit 被 ACL 封鎖 | ✅ 已通過直接文件操作繞過 | `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` |
-| 本地磁盤還原清除 BCD | ✅ 無本地還原軟件 | — |
+| kdisk RAM 寫緩衝覆蓋 BCD 修改 | ✅ BCD 在 `C:\Boot\`，受 kdisk 保護，但 DKTM 在重啓前寫入有效，Boot Manager 讀取後即清除 bootsequence | — |
+| 熱重啓後 kdisk 緩衝區行為 | ⚠️ 待確認：WinPE 期間 kdisk 未加載，重回 Windows 後緩衝區是否延續取決於 KScsiDisk 握手協議 | 建議實測觀察重啓後 RAM 使用率 |
 | lwdeploy 服務器推送重鏡像 | ⚠️ 無法預測，屬外部因素 | BCD 寫入後盡快重啓，縮短暴露窗口 |
 | lwclient 實時連線服務器 | ⚠️ 管理員可能實時看到操作 | 不建議在網咖環境用 real-run |
 | SeRestorePrivilege 默認啓用 | ✅ BCD 寫入無需額外提權 | — |
