@@ -75,12 +75,119 @@ class PlatformOps:
     # ------------------------------------------------------------------
     _BOOTMGR_GUID = "{9dea862c-5cdd-4e70-acc1-f32b344d4795}"
     _BCD_FILE_PATH = r"C:\Boot\BCD"
+    _BCD_BACKUP_PATH = r"C:\Boot\BCD.dktm.bak"
     _TMP_HIVE = r"HKLM\TmpDKTM"
     _BOOTSEQUENCE_ELEM = "24000002"
+    _DISPLAYORDER_ELEM = "24000001"
 
     def _bcd_file_available(self) -> bool:
         """Return True if C:\\Boot\\BCD is present and readable."""
         return os.path.isfile(self._BCD_FILE_PATH)
+
+    def _backup_bcd_file(self) -> None:
+        """Copy C:\\Boot\\BCD to C:\\Boot\\BCD.dktm.bak before modification."""
+        import shutil
+        shutil.copy2(self._BCD_FILE_PATH, self._BCD_BACKUP_PATH)
+        self.logger.info("✓ BCD backed up to %s", self._BCD_BACKUP_PATH)
+
+    def _restore_bcd_file(self) -> None:
+        """Overwrite C:\\Boot\\BCD from backup, recovering from a failed write."""
+        import shutil
+        if os.path.isfile(self._BCD_BACKUP_PATH):
+            shutil.copy2(self._BCD_BACKUP_PATH, self._BCD_FILE_PATH)
+            self.logger.warning("BCD restored from backup %s", self._BCD_BACKUP_PATH)
+        else:
+            self.logger.error("Backup %s not found — cannot restore BCD", self._BCD_BACKUP_PATH)
+
+    def _verify_bcd_integrity(self, expected_bootsequence_guid: Optional[str] = None) -> None:
+        """Load BCD and verify critical invariants.
+
+        Checks performed:
+        1. bootmgr object is present and queryable.
+        2. displayorder element (24000001) exists and is non-empty — proves
+           the bootmgr entry itself is intact.
+        3. bootsequence element (24000002) state matches expectation:
+           - If ``expected_bootsequence_guid`` is given, the element must
+             exist with the correct 16-byte GUID encoding.
+           - If ``None``, the element must be absent (post-rollback state).
+
+        Parameters
+        ----------
+        expected_bootsequence_guid : str or None
+            GUID string expected in the bootsequence element, or ``None``
+            to assert the element has been removed.
+
+        Raises
+        ------
+        RuntimeError
+            If any invariant is violated.
+        """
+        import winreg
+
+        r = subprocess.run(
+            ["reg", "load", self._TMP_HIVE, self._BCD_FILE_PATH],
+            capture_output=True, encoding="mbcs", errors="replace"
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"Integrity check: reg load failed: {r.stderr.strip()}")
+
+        issues = []
+        try:
+            bootmgr = "{" + self._BOOTMGR_GUID.strip("{}") + "}"
+            hive_short = self._TMP_HIVE[len("HKLM\\"):]
+
+            # --- 1. bootmgr object exists ---
+            bootmgr_path = f"{hive_short}\\Objects\\{bootmgr}"
+            try:
+                k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, bootmgr_path,
+                                   0, winreg.KEY_READ)
+                winreg.CloseKey(k)
+            except OSError:
+                issues.append("bootmgr object missing from BCD")
+
+            # --- 2. displayorder element present and non-empty ---
+            disp_path = f"{bootmgr_path}\\Elements\\{self._DISPLAYORDER_ELEM}"
+            try:
+                k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, disp_path,
+                                   0, winreg.KEY_READ)
+                val, _ = winreg.QueryValueEx(k, "Element")
+                winreg.CloseKey(k)
+                if not val:
+                    issues.append("displayorder element is empty")
+            except OSError:
+                issues.append("displayorder element (24000001) missing from bootmgr")
+
+            # --- 3. bootsequence element state ---
+            boot_path = f"{bootmgr_path}\\Elements\\{self._BOOTSEQUENCE_ELEM}"
+            try:
+                k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, boot_path,
+                                   0, winreg.KEY_READ)
+                val, _ = winreg.QueryValueEx(k, "Element")
+                winreg.CloseKey(k)
+                if expected_bootsequence_guid is None:
+                    issues.append("bootsequence element still present after rollback")
+                else:
+                    expected_bytes = bytes.fromhex(
+                        self._guid_to_binary_hex(expected_bootsequence_guid)
+                    )
+                    if val != expected_bytes:
+                        issues.append(
+                            f"bootsequence mismatch: got {val.hex()} "
+                            f"expected {expected_bytes.hex()}"
+                        )
+            except OSError:
+                if expected_bootsequence_guid is not None:
+                    issues.append("bootsequence element missing after commit")
+                # else: absent after rollback — correct
+        finally:
+            subprocess.run(
+                ["reg", "unload", self._TMP_HIVE],
+                capture_output=True, encoding="mbcs", errors="replace"
+            )
+
+        if issues:
+            raise RuntimeError("BCD integrity check failed: " + "; ".join(issues))
+        self.logger.info("✓ BCD integrity verified")
 
     def _guid_to_binary_hex(self, guid_str: str) -> str:
         """Convert a GUID string to 16-byte Windows binary hex (little-endian fields).
@@ -244,6 +351,7 @@ class PlatformOps:
         """
         self.logger.info("Using direct BCD file method (bcdedit not available)")
         self._enable_backup_restore_privileges()
+        self._backup_bcd_file()
 
         r = subprocess.run(
             ["reg", "load", self._TMP_HIVE, self._BCD_FILE_PATH],
@@ -270,6 +378,15 @@ class PlatformOps:
             else:
                 self.logger.warning("BCD hive unloaded after write error")
 
+        # Integrity check — restore backup on failure
+        try:
+            self._verify_bcd_integrity(expected_bootsequence_guid=winpe_guid)
+        except RuntimeError as exc:
+            self.logger.error("BCD integrity check failed after commit: %s", exc)
+            self.logger.error("Restoring BCD from backup...")
+            self._restore_bcd_file()
+            raise
+
     def _rollback_via_bcd_file(self) -> None:
         """Remove the bootsequence element from C:\\Boot\\BCD directly.
 
@@ -280,6 +397,7 @@ class PlatformOps:
         """
         self.logger.info("Removing bootsequence via direct BCD file method")
         self._enable_backup_restore_privileges()
+        self._backup_bcd_file()
 
         r = subprocess.run(
             ["reg", "load", self._TMP_HIVE, self._BCD_FILE_PATH],
@@ -298,6 +416,15 @@ class PlatformOps:
                 capture_output=True, encoding="mbcs", errors="replace"
             )
             self.logger.info("✓ BCD hive unloaded")
+
+        # Integrity check — restore backup on failure
+        try:
+            self._verify_bcd_integrity(expected_bootsequence_guid=None)
+        except RuntimeError as exc:
+            self.logger.error("BCD integrity check failed after rollback: %s", exc)
+            self.logger.error("Restoring BCD from backup...")
+            self._restore_bcd_file()
+            raise
 
     # ------------------------------------------------------------------
     # bcdedit / reagentc helpers
