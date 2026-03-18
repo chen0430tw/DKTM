@@ -165,49 +165,20 @@ class Executor:
         return False
 
     # ------------------------------------------------------------------
-    # Example stub implementations
+    # Command implementations
     # ------------------------------------------------------------------
     def _freeze_services(self) -> None:
-        """Quiesce running services to prepare for maintenance."""
-        # In a real implementation this would stop non‑essential services.
-        self.logger.info("Freezing services (stub)")
-
-    def _quiesce_services_tier1(self) -> None:
-        """Quiesce first tier of services."""
-        self.logger.info("Quiescing tier 1 services (stub)")
-
-    def _quiesce_services_tier2(self) -> None:
-        """Quiesce second tier of services."""
-        self.logger.info("Quiescing tier 2 services (stub)")
+        """Stop non-essential services before transition."""
+        platform_ops.freeze_services(dry_run=False)
 
     def _flush_io(self) -> None:
-        """Flush pending I/O operations."""
-        self.logger.info("Flushing I/O (stub)")
+        """Flush filesystem write buffers."""
+        platform_ops.flush_buffers(dry_run=False)
 
     def _flush_buffers(self) -> None:
-        """Flush system buffers."""
-        self.logger.info("Flushing buffers (stub)")
-
-    def _quiesce_drivers_soft(self) -> None:
-        """Quiesce drivers using soft quiescence."""
-        self.logger.info("Quiescing drivers (soft) (stub)")
-
-    def _quiesce_drivers_hard(self) -> None:
-        """Quiesce drivers using hard reset."""
-        self.logger.info("Quiescing drivers (hard) (stub)")
+        """Flush filesystem write buffers (alias for flush_io)."""
+        platform_ops.flush_buffers(dry_run=False)
 
     def _health_check(self) -> None:
-        """Perform a health check on the system."""
-        self.logger.info("Performing health check (stub)")
-
-    def _verify_integrity(self) -> None:
-        """Verify system integrity."""
-        self.logger.info("Verifying system integrity (stub)")
-
-    def _enter_maintenance(self) -> None:
-        """Prepare the system for maintenance mode."""
-        self.logger.info("Entering maintenance mode (stub)")
-
-    def _exit_maintenance(self) -> None:
-        """Exit maintenance mode and resume normal operations."""
-        self.logger.info("Exiting maintenance mode (stub)")
+        """Verify system is ready for hot restart."""
+        platform_ops.health_check(dry_run=False)

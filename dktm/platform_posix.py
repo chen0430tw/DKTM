@@ -107,9 +107,21 @@ class PlatformOps:
         self.logger.info("%s Reboot requested (stub, no action)", mode)
 
     def handover_control(self) -> None:
-        """Stub implementation of handover_control for POSIX.
-
-        Logs a message indicating that control handover would occur.
-        """
+        """Stub: log handover_control (no-op on POSIX)."""
         mode = "[DRY-RUN]" if self.dry_run else "[POSIX]"
         self.logger.info("%s handover_control invoked (stub)", mode)
+
+    def freeze_services(self) -> None:
+        """Stub: log freeze_services (no-op on POSIX)."""
+        mode = "[DRY-RUN]" if self.dry_run else "[POSIX]"
+        self.logger.info("%s freeze_services invoked (stub)", mode)
+
+    def flush_buffers(self) -> None:
+        """Stub: log flush_buffers (no-op on POSIX)."""
+        mode = "[DRY-RUN]" if self.dry_run else "[POSIX]"
+        self.logger.info("%s flush_buffers invoked (stub)", mode)
+
+    def health_check(self) -> None:
+        """Stub: log health_check (no-op on POSIX)."""
+        mode = "[DRY-RUN]" if self.dry_run else "[POSIX]"
+        self.logger.info("%s health_check invoked (stub)", mode)

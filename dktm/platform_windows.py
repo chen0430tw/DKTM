@@ -390,20 +390,134 @@ class PlatformOps:
             raise RuntimeError("shutdown command not available")
 
     def handover_control(self) -> None:
-        """Perform final tasks before transitioning to PE.
-
-        This method can be used to:
-        - Flush logs to disk
-        - Persist critical state
-        - Signal readiness for transition
-        - Perform final health checks
-        """
+        """Perform final tasks before transitioning to PE."""
         self.logger.info("=== Handover Control to WinPE ===")
-
-        # Flush any pending logs
         for handler in logging.getLogger().handlers:
             handler.flush()
-
-        # Could add: Save system snapshot, close handles, etc.
         self.logger.info("✓ Control handover prepared")
         self.logger.info("System ready for transition")
+
+    def freeze_services(self) -> None:
+        """Stop non-essential services before transition.
+
+        Stops a conservative set of services that may be writing data
+        (spooler, SysMain, WSearch). Failures are logged but not fatal.
+        """
+        services = ["spooler", "SysMain", "WSearch"]
+        self.logger.info("Freezing non-essential services: %s", ", ".join(services))
+
+        if self.dry_run:
+            for svc in services:
+                self.logger.info("[DRY-RUN] Would stop service: %s", svc)
+            return
+
+        for svc in services:
+            try:
+                result = subprocess.run(
+                    ["sc", "stop", svc],
+                    capture_output=True, text=True,
+                    encoding="mbcs", errors="replace"
+                )
+                if result.returncode == 0:
+                    self.logger.info("✓ Stopped service: %s", svc)
+                else:
+                    # Not running or access denied — not fatal
+                    self.logger.debug("Service %s: %s", svc, result.stderr.strip())
+            except Exception as exc:
+                self.logger.debug("Could not stop service %s: %s", svc, exc)
+
+    def flush_buffers(self) -> None:
+        """Flush filesystem write buffers on all fixed volumes.
+
+        Uses FlushFileBuffers via ctypes on each fixed drive volume
+        to ensure pending writes reach disk before reboot.
+        Requires administrator privileges.
+        """
+        self.logger.info("Flushing filesystem buffers...")
+
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would flush filesystem buffers")
+            return
+
+        import ctypes
+        import string
+
+        GENERIC_WRITE = 0x40000000
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        OPEN_EXISTING = 3
+        INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+        flushed = 0
+        for letter in string.ascii_uppercase:
+            path = f"\\\\.\\{letter}:"
+            # Check drive exists
+            if ctypes.windll.kernel32.GetDriveTypeW(f"{letter}:\\") != 3:  # DRIVE_FIXED = 3
+                continue
+            h = ctypes.windll.kernel32.CreateFileW(
+                path, GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None, OPEN_EXISTING, 0, None
+            )
+            if h == INVALID_HANDLE_VALUE:
+                self.logger.debug("Could not open volume %s: (access denied, skipping)", path)
+                continue
+            ok = ctypes.windll.kernel32.FlushFileBuffers(h)
+            ctypes.windll.kernel32.CloseHandle(h)
+            if ok:
+                self.logger.info("✓ Flushed volume %s:", letter)
+                flushed += 1
+            else:
+                self.logger.warning("FlushFileBuffers failed for %s:", letter)
+
+        if flushed == 0:
+            self.logger.warning("No volumes flushed (admin privileges may be required)")
+        else:
+            self.logger.info("✓ Flushed %d volume(s)", flushed)
+
+    def health_check(self) -> None:
+        """Verify system is ready for hot restart.
+
+        Checks:
+        - Administrator privileges
+        - System drive has at least 100 MB free
+        - bcdedit is accessible
+        """
+        self.logger.info("Running pre-restart health check...")
+        issues = []
+
+        # 1. Admin privileges
+        if not self._check_admin_privileges():
+            issues.append("Not running as administrator")
+
+        # 2. Disk space on system drive
+        import ctypes
+        sys_drive = os.environ.get("SystemDrive", "C:") + "\\"
+        free_bytes = ctypes.c_ulonglong(0)
+        ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+            sys_drive, None, None, ctypes.byref(free_bytes)
+        )
+        free_mb = free_bytes.value // (1024 * 1024)
+        if free_mb < 100:
+            issues.append(f"Low disk space on {sys_drive}: {free_mb} MB free (need 100 MB)")
+        else:
+            self.logger.info("✓ Disk space OK: %d MB free on %s", free_mb, sys_drive)
+
+        # 3. bcdedit accessible (only matters for real-run)
+        if not self.dry_run:
+            try:
+                subprocess.run(
+                    ["bcdedit", "/enum", "{bootmgr}"],
+                    capture_output=True, check=True,
+                    encoding="mbcs", errors="replace"
+                )
+                self.logger.info("✓ bcdedit accessible")
+            except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+                issues.append(f"bcdedit not accessible: {exc}")
+
+        if issues:
+            for issue in issues:
+                self.logger.error("✗ %s", issue)
+            raise RuntimeError("Health check failed: " + "; ".join(issues))
+
+        self.logger.info("✓ Health check passed")

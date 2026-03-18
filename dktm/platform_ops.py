@@ -110,6 +110,24 @@ def reboot(dry_run: bool = False) -> None:
     ops.reboot()
 
 
+def freeze_services(dry_run: bool = False) -> None:
+    """Stop non-essential services before transition."""
+    ops = PlatformOps(winpe_entry_ids=[], marker_path="", dry_run=dry_run)
+    ops.freeze_services()
+
+
+def flush_buffers(dry_run: bool = False) -> None:
+    """Flush filesystem write buffers on all fixed volumes."""
+    ops = PlatformOps(winpe_entry_ids=[], marker_path="", dry_run=dry_run)
+    ops.flush_buffers()
+
+
+def health_check(dry_run: bool = False) -> None:
+    """Verify system is ready for hot restart."""
+    ops = PlatformOps(winpe_entry_ids=[], marker_path="", dry_run=dry_run)
+    ops.health_check()
+
+
 def handover_control(dry_run: bool = False) -> None:
     """Perform any pre‑handover tasks before jumping to PE.
 
