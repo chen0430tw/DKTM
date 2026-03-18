@@ -673,11 +673,12 @@ class PlatformOps:
         if entry_id:
             self.logger.info("Target WinPE entry: %s", entry_id)
 
-        # Validate configuration
-        if not self.winpe_entry_ids and transition_method == "bcd":
+        # Validate configuration — use effective_ids (discovered), not the raw
+        # configured list which may intentionally be empty (auto-discover mode).
+        if not effective_ids and transition_method == "bcd":
             if not fallback_method:
                 fallback_method = "winre"
-            self.logger.warning("No WinPE entry IDs; falling back to %s", fallback_method)
+            self.logger.warning("No WinPE/WinRE entry found in BCD; falling back to %s", fallback_method)
             transition_method = fallback_method
 
         # Check privileges (warning only in dry-run)
@@ -1034,6 +1035,22 @@ class PlatformOps:
                     )
                 else:
                     issues.append("bcdedit not accessible and C:\\Boot\\BCD not found")
+
+        # 4. Boot entry availability
+        if not self.dry_run:
+            effective_ids = self._resolve_winpe_entry_ids()
+            if not effective_ids:
+                issues.append(
+                    "No bootable WinPE or WinRE entry found — "
+                    "run bcd_add_winpe.py or ensure WinRE is enabled (reagentc /info)"
+                )
+            elif effective_ids[0].lower() == self._DKTM_WINPE_GUID.lower():
+                self.logger.info("✓ Boot entry: DKTM clean WinPE (%s)", effective_ids[0])
+            else:
+                self.logger.info(
+                    "✓ Boot entry: WinRE fallback (%s) — clean WinPE not found",
+                    effective_ids[0]
+                )
 
         if issues:
             for issue in issues:

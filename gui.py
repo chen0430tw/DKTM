@@ -132,6 +132,7 @@ class DKTMApp:
         inner.pack(fill=tk.X)
 
         self._indicators: dict[str, tk.Label] = {}
+        self._indicator_labels: dict[str, tk.Label] = {}
         items = [
             ("admin",  "Administrator"),
             ("winpe",  "WinPE"),
@@ -142,8 +143,10 @@ class DKTMApp:
             col.pack(side=tk.LEFT, padx=(0, 24))
             dot = tk.Label(col, text="●", font=reg10, bg=C_PANEL, fg=C_DIM)
             dot.pack(side=tk.LEFT, padx=(0, 4))
-            tk.Label(col, text=label, font=reg10, bg=C_PANEL, fg=C_DIM).pack(side=tk.LEFT)
+            lbl = tk.Label(col, text=label, font=reg10, bg=C_PANEL, fg=C_DIM)
+            lbl.pack(side=tk.LEFT)
             self._indicators[key] = dot
+            self._indicator_labels[key] = lbl
 
         # ── Main button area ──────────────────────────────────────────────────
         btn_frame = tk.Frame(r, bg=C_BG, pady=10)
@@ -246,8 +249,13 @@ class DKTMApp:
     # ── Indicator helpers ─────────────────────────────────────────────────────
 
     def _set_indicator(self, key: str, ok: Optional[bool]) -> None:
-        colours = {True: C_GREEN, False: C_RED, None: C_DIM}
+        # True=green, False=red, None=yellow (degraded but usable)
+        colours = {True: C_GREEN, False: C_RED, None: C_YELLOW}
         self._indicators[key].configure(fg=colours.get(ok, C_DIM))
+
+    def _set_indicator_label(self, key: str, text: str) -> None:
+        if key in self._indicator_labels:
+            self._indicator_labels[key].configure(text=text)
 
     def _set_status(self, text: str, colour: str = C_DIM) -> None:
         self._status_var.set(text)
@@ -288,12 +296,19 @@ class DKTMApp:
                 dry_run=self.dry_run,
             )
             entries = win_ops._resolve_winpe_entry_ids()
-            winpe_ok = len(entries) > 0
-            self.root.after(0, self._set_indicator, "winpe", winpe_ok)
-            if not winpe_ok:
-                issues.append("No WinPE/WinRE entry found in BCD")
+            if not entries:
+                self.root.after(0, self._set_indicator, "winpe", False)
+                self.root.after(0, self._set_indicator_label, "winpe", "WinPE")
+                issues.append("No WinPE or WinRE entry found in BCD")
+            elif entries[0].lower() == win_ops._DKTM_WINPE_GUID.lower():
+                self.root.after(0, self._set_indicator, "winpe", True)
+                self.root.after(0, self._set_indicator_label, "winpe", "WinPE")
+                self.logger.info("Boot entry: DKTM clean WinPE")
             else:
-                self.logger.info("WinPE entry: %s", entries[0])
+                # Only WinRE available — yellow warning, still usable
+                self.root.after(0, self._set_indicator, "winpe", None)
+                self.root.after(0, self._set_indicator_label, "winpe", "WinRE only")
+                self.logger.warning("Boot entry: WinRE fallback only (clean WinPE not found)")
         else:
             self.root.after(0, self._set_indicator, "winpe", None)
 
