@@ -1,0 +1,8 @@
+executor:
+  mode: real-run
+  auto_reboot: false
+  transition_method: auto
+  fallback_method: winre
+  marker_path: "C:\\dktm_transition.marker"
+  winpe_entry_ids:
+    - "{300209a8-6279-11e6-90e0-000c295c2276}"
