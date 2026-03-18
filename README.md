@@ -153,6 +153,28 @@ DKTM/
 
 ---
 
+## 典型使用场景
+
+### 替代「安装后重启」
+
+安装 WSL、Docker Desktop 或其他需要重启才能激活的 Windows Feature 后，安装程序会弹出「需要重启」提示。
+
+在受限环境（如网咖）中，普通重启意味着经历完整的开机流程，可能触发管理软件的干预。用热重启代替：
+
+```
+安装 WSL / Docker / Windows Feature
+    ↓
+不点安装程序的「立即重启」
+    ↓
+python gui.py  →  HOT RESTART
+    ↓
+回到 Windows，Feature 正常激活，可直接使用
+```
+
+热重启走 Windows → WinPE（秒过）→ Windows，等效于一次完整重启，内核模块和 Feature 会正常初始化，安装在磁盘上的任何数据不受影响。
+
+---
+
 ## 常见问题
 
 **bcdedit 报权限错误？**
