@@ -1,227 +1,244 @@
-# 網咖環境調研與重置機制評估
+# 網咖環境調研報告
 
 > 調研日期：2026-03-18
-> 機器：Windows 10 Enterprise 2016 LTSB (10.0.19045)
-> 身份：Administrator（High Mandatory Level）
+> 機器 IP：192.168.10.39
+> 系統：Windows 10 Enterprise 2016 LTSB (10.0.19045)
+> 運行身份：Administrator（High Mandatory Level）
 
 ---
 
-## 一、網咖管理軟件
+## 一、管理軟件體系
 
-### 主要組件
+這台機器運行兩套平行的管理系統：**GetwayMi**（遊戲菜單）和 **lwdeploy**（系統管理/部署）。
 
-| 軟件 | 路徑 | 功能 |
+### 1.1 GetwayMi
+
+| 組件 | 位置 | 說明 |
 |------|------|------|
-| **GetwayMi** | `D:\games\gwm_data\setup\GetwayMi.exe` | 遊戲菜單主程序、遊戲啓動管理 |
-| **gwloader.exe** | `D:\games\<各遊戲>\gwloader.exe` | 各遊戲的啓動包裝器（每個遊戲目錄各一份） |
-| **Smart Cyber Cafe Client** | `C:\Program Files (x86)\Wameng\Smart Cyber Cafe - Client\` | 計費、計時、用戶鎖定 |
-| **CoffeeNet.exe** | 同上 | 計費服務主程序，TCP 端口 6700/6702 |
+| `GetwayMi.exe` | `D:\games\gwm_data\setup\` | 遊戲菜單主程序（GUI） |
+| `gwloader.exe` | `D:\games\<每個遊戲>\` | 遊戲啓動包裝器，每個遊戲目錄各一份 |
+| `gw_menu*.txt` | `D:\games\gwm_data\setup\` | 遊戲分類菜單定義（9 組） |
+| `boot.bat` | `D:\games\gwm_data\patches\` | 開機補丁腳本 |
 
-### Smart Cyber Cafe 配置（`CoffeeNet.ini`）
+`boot.bat` 在開機時按順序執行補丁目錄下的所有 `.reg` 和 `.exe`，只做環境初始化，不恢復磁盤狀態。
 
-```ini
-[OPTIONS]
-PROTOCOL=TCP/IP
-LPORT=6700
-SPORT=6702
-Host=192.168.10.252        ; 管理服務器 IP
-RestartTimeout=0           ; 重啓超時（未啓用）
-IdleShutDown=0             ; 閒置關機（未啓用）
-AllowNewMember=0
-```
-
-### GetwayMi 數據目錄 (`D:\games\gwm_data\`)
-
-- `setup/gw_menu*.txt` — 遊戲菜單分類定義（多達 9 組）
-- `setup/GetwayMi.exe` — 主程序（2018 年版本）
-- `patches/boot.bat` — 開機時執行的補丁腳本
-- `patches/ini/*.ini` — Junction 點管理、遊戲刷新規則
-
----
-
-## 二、環境重置機制
-
-### 結論：**使用網絡重鏡像（lwdeploy），不使用本地磁盤還原**
-
-經過完整調查，排除了以下常見網咖磁盤保護方案：
-
-| 方案 | 調查結果 |
-|------|---------|
-| Deep Freeze | ❌ 無相關驅動或進程 |
-| Shadow Protect / ShadowUser | ❌ 無相關驅動或進程 |
-| 冰點還原 / Reboot Restore Rx | ❌ 無相關驅動或進程 |
-| Windows Steady State | ❌ 不支持此 Windows 版本 |
-| Volume Shadow Copy (VSS) | ❌ `vssadmin list shadows` 無任何快照 |
-| NTFS 過濾驅動 | ❌ `fltMC filters` 僅有標準 Windows 過濾器 |
-
-### lwdeploy（網絡部署工具）
+### 1.2 Smart Cyber Cafe（CoffeeNet）— 計費系統
 
 ```
+C:\Program Files (x86)\Wameng\Smart Cyber Cafe - Client\
+  ScStart.exe    ← 開機自啓（HKLM\Run: ICoffee）
+  CoffeeNet.exe  ← 計費/計時主程序（TCP 6700/6702）
+```
+
+管理服務器：`192.168.10.252`，負責計時、鎖定、帳號管理。
+
+### 1.3 lwdeploy（lw 系列）— 系統管理平台
+
+```
+B:\lwclient64\              ← 運行在獨立的 B: 分區（userdisk，100 GB）
+  lwclient64.exe            ← 主客戶端服務（SYSTEM 帳號，AUTO_START）
+  lwhardware64.exe          ← 硬件監控（溫度、CPU 使用率）
+  lwPersonalSetting64.exe   ← 用戶設置同步
+  ReportBSGuard64.exe       ← 異常上報守護
+  config\config.ini         ← 服務器配置
 C:\lwdeploy\
-  ├── lwcopy_win10.exe      # 主程序（2022-12，5.4 MB）
-  ├── kpowershutdown64.sys  # Kernel-level 電源控制驅動
-  ├── kpowershut.exe        # 電源控制用戶態程序
-  ├── config\config.ini     # serverip=192.168.2.251
-  └── drivers\devcon64.exe  # 設備管理工具
+  lwcopy_win10.exe          ← 系統鏡像部署工具
+  kpowershutdown64.sys      ← Kernel 級電源控制驅動
 ```
 
-**工作原理**：連接部署服務器（`192.168.2.251`），由服務器端決定何時推送鏡像。不是每次重啓都觸發，通常是管理員手動或定時重鏡像。
+**服務器連接（實時建立中）**：
 
-**對 DKTM 的影響**：
-BCD 修改在重啓後**會持久保留**，不會被本地還原機制清除。若管理員觸發重鏡像則整台機器恢復出廠，屬於極端情況。
+| 進程 | 目標地址 | 端口 | 用途推測 |
+|------|---------|------|---------|
+| `lwclient64.exe` | 192.168.10.242 | 13004 | 主控信道 |
+| `lwclient64.exe` | 192.168.10.242 | 13000 | 數據信道 |
+| `lwclient64.exe` | 192.168.10.243 | 13501 | 備援/監控 |
+| `lwhardware64.exe` | 192.168.10.243 | 13000 | 硬件數據上報 |
 
-### 開機補丁腳本（`boot.bat`）
-
-每次開機執行，只做環境配置，不恢復磁盤狀態：
-
-```bat
-for %%i in (D:\games\gwm_data\patches\8\*.reg) do regedit /s %%i
-for %%i in (D:\games\gwm_data\patches\8\*.exe) do start /wait %%i
-for %%i in (D:\games\gwm_data\patches\9\*.reg) do regedit /s %%i
-for %%i in (D:\games\gwm_data\patches\*.reg) do regedit /s %%i
-for %%i in (D:\games\gwm_data\patches\*.exe) do start %%i
-```
+`B:` 盤標卷名為 `userdisk`，與系統盤 `C:` 分離，可能在重鏡像時被保留（lw 客戶端自我保護）。
 
 ---
 
-## 三、系統開機環境（BCD）分析
+## 二、開機流程
 
-### bcdedit 封鎖原因
+```
+POST / UEFI
+    │
+    ▼
+Boot Manager (C:\bootmgr)
+  讀取 C:\Boot\BCD
+  → 啓動 Windows 10 Enterprise LTSB
+    │
+    ▼
+Windows 核心啓動
+  ntoskrnl.exe → smss.exe → winlogon.exe
+  Administrator 帳號自動登錄（High Mandatory Level）
+    │
+    ├─ [服務自啓] lwclient (AUTO_START, LocalSystem)
+    │    B:\lwclient64\lwclient64.exe
+    │    └─ 連線 192.168.10.242 / 192.168.10.243
+    │
+    ├─ [服務自啓] SmartSAMD (Kernel Driver, DEMAND_START)
+    │    \SystemRoot\System32\drivers\SmartSAMD.sys
+    │
+    ├─ [HKLM\Run] ScStart.exe /first
+    │    啓動 Smart Cyber Cafe 計費客戶端
+    │    CoffeeNet.exe 連線 192.168.10.252:6700
+    │
+    ├─ [HKLM\Run] RtkAudUService64.exe（音頻驅動服務）
+    │
+    └─ [用戶進程]
+         lwhardware64.exe   → 硬件監控上報
+         lwPersonalSetting64.exe → 用戶設置
+         gwloader.exe       → 遊戲啓動入口（GetwayMi 菜單）
+```
 
-`bcdedit /enum {bootmgr}` 返回 exit code 1（Access Denied）。
+**關鍵觀察**：沒有開機時自動觸發磁盤還原的步驟。lwdeploy 的重鏡像由服務器端主動推送，不在本機開機流程中。
 
-根本原因：`HKLM\BCD00000000` 的 ACL 只允許 SYSTEM 帳號寫入。儘管當前身份是 Administrators（High Mandatory Level），仍無法直接寫入 BCD 注冊表路徑。
+---
 
-### 解決方案：直接修改 `C:\Boot\BCD` 文件
+## 三、磁盤分區配置
 
-`C:\Boot\BCD` 是普通 NTFS 文件，Administrators 有讀寫權限。通過以下流程繞過 BCDStore 的 ACL 限制：
+| 盤符 | 卷標 | 容量 | 用途 |
+|------|------|------|------|
+| `B:` | userdisk | 100 GB | lwdeploy 客戶端 + 用戶設置 |
+| `C:` | （系統盤） | 100 GB | Windows 系統、遊戲管理工具 |
+| `D:` | Games1 | 56 TB | 遊戲主存儲 |
+| `E:` | KINGSTON | 124 GB | 外接 USB 設備 |
+| `H:` | Games4 | 14 TB | 遊戲擴展存儲 |
 
-1. 啓用 `SeBackupPrivilege` + `SeRestorePrivilege`
-2. `reg load HKLM\TmpDKTM C:\Boot\BCD`
-3. 用 `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` 寫入 bootsequence 元素（`24000002`）
-4. `reg unload HKLM\TmpDKTM`（自動刷回文件）
+`B:` 盤獨立於系統盤，存放 lwdeploy 客戶端，推測重鏡像時不受影響，確保管理連接在重置後依然存在。
 
-Boot Manager 在 POST 階段直接讀取 `C:\Boot\BCD` 文件，完全繞開 Windows 注冊表 ACL。
+---
 
-### BCD 對象完整清單（共 13 個）
+## 四、環境重置機制
+
+### 4.1 結論：網絡重鏡像，無本地磁盤保護
+
+逐一排查常見網咖保護方案：
+
+| 方案 | 調查方法 | 結果 |
+|------|---------|------|
+| Deep Freeze | 驅動列表、進程列表 | ❌ 不存在 |
+| ShadowUser / Shadow Protect | 驅動列表 | ❌ 不存在 |
+| 冰點還原 / Reboot Restore Rx | 驅動列表 | ❌ 不存在 |
+| NTFS 過濾驅動（寫保護） | `fltMC filters` | ❌ 僅標準 Windows 過濾器 |
+| Volume Shadow Copy | `vssadmin list shadows` | ❌ 無任何快照 |
+| AppLocker / SRP | 注冊表策略鍵 | ❌ 未部署 |
+
+**實際機制**：`lwcopy_win10.exe` + `kpowershutdown64.sys`，由管理服務器（192.168.10.242/243）決定何時推送鏡像。**不是每次重啓都觸發**，屬管理員手動操作或定時排程。
+
+### 4.2 bcdedit 被封鎖的根本原因
+
+`bcdedit` 訪問 `HKLM\BCD00000000` 注冊表路徑，該路徑的 ACL 只允許 SYSTEM 帳號寫入。本機雖以 Administrator 運行，但**並非 SYSTEM**，因此寫入被拒。
+
+值得注意：bcdedit 的封鎖**不是** AppLocker/SRP 策略（兩者均未部署），純粹是 BCD 注冊表 hive 的 ACL 設計。
+
+---
+
+## 五、進程令牌權限分析
+
+通過 Win32 API 直接枚舉令牌，共 24 項特權：
+
+**已啓用（對 DKTM 有意義）**：
+
+| 特權 | 狀態 | 意義 |
+|------|------|------|
+| `SeBackupPrivilege` | **ENABLED** | 可讀取任意文件，繞過 ACL（讀 BCD）|
+| `SeRestorePrivilege` | **ENABLED** | 可寫入任意文件，繞過 ACL（**這是 BCD 文件寫入能成功的根本原因**）|
+| `SeDebugPrivilege` | **ENABLED** | 可附加調試器到任意進程（含 SYSTEM 進程）|
+| `SeImpersonatePrivilege` | ENABLED（默認）| 可模擬其他用戶令牌 |
+| `SeCreateGlobalPrivilege` | ENABLED（默認）| 可創建全局命名對象 |
+
+**已禁用（值得關注）**：
+
+| 特權 | 意義 |
+|------|------|
+| `SeSystemEnvironmentPrivilege` | **禁用** — 無法通過 API 修改 UEFI 變量，必須操作 BCD 文件 |
+| `SeLoadDriverPrivilege` | 禁用 — 無法加載內核驅動 |
+| `SeTakeOwnershipPrivilege` | 禁用 — 無法奪取文件/注冊表所有權 |
+| `SeSecurityPrivilege` | 禁用 — 無法修改安全描述符 |
+| `SeShutdownPrivilege` | 禁用 — `InitiateSystemShutdown` API 無效，但 `shutdown.exe` 命令仍可用 |
+
+**關鍵發現**：`SeBackupPrivilege` 和 `SeRestorePrivilege` 在令牌中已**默認啓用**，無需調用 `AdjustTokenPrivileges`。這解釋了為什麼 `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` 能繞過 BCD hive 的 ACL 限制直接寫入。
+
+---
+
+## 六、BCD 結構與 WinPE 環境
+
+### 6.1 系統 BCD 對象清單（共 13 個）
 
 | GUID | 類型 | 描述 |
 |------|------|------|
-| `{9dea862c-5cdd-4e70-acc1-f32b344d4795}` | 0x10100002 | Windows Boot Manager |
-| `{e18e67b0-6278-11e6-a822-9a545abf3b29}` | 0x10200003 | Windows 10 Enterprise 2016 LTSB（主系統） |
-| `{300209a8-6279-11e6-90e0-000c295c2276}` | 0x10200003 | **Windows Recovery Environment（WinRE）** |
-| `{300209a9-6279-11e6-90e0-000c295c2276}` | 0x30000000 | WinRE Ramdisk Options |
-| `{e18e67af-6278-11e6-a822-9a545abf3b29}` | 0x10200004 | Windows Resume Application（休眠恢復，非 WinPE） |
-| `{b2721d73-1db4-4c62-bf78-c548a880142d}` | 0x10200005 | Windows 內存診斷 |
-| 其餘 7 個 | 0x20100000 / 0x20200003 | Boot sector / EFI 應用 |
+| `{9dea862c-5cdd-4e70-acc1-f32b344d4795}` | `0x10100002` | Windows Boot Manager |
+| `{e18e67b0-6278-11e6-a822-9a545abf3b29}` | `0x10200003` | Windows 10 Enterprise 2016 LTSB（主系統）|
+| `{300209a8-6279-11e6-90e0-000c295c2276}` | `0x10200003` | **Windows Recovery Environment（WinRE）** |
+| `{300209a9-6279-11e6-90e0-000c295c2276}` | `0x30000000` | WinRE Ramdisk Options |
+| `{e18e67af-6278-11e6-a822-9a545abf3b29}` | `0x10200004` | Windows Resume Application（**休眠恢復**，非 WinPE）|
+| `{b2721d73-1db4-4c62-bf78-c548a880142d}` | `0x10200005` | Windows 內存診斷 |
+| 其餘 7 個 | `0x20100000` / `0x20200003` | Boot sector / EFI 應用 |
 
-### WinRE Ramdisk 配置
+> ⚠️ `{e18e67af-...}` 的 Path 是 `\hiberfil.sys`，是休眠恢復程序，誤用會導致進入休眠恢復流程。
 
-```
-Ramdisk Options {300209a9-...}:
-  Image Path : \Recovery\WindowsRE\boot.sdi (SDI 文件)
-  WIM Device : locate 類型（指向系統分區上的 Winre.wim）
+### 6.2 可用 WinPE 環境
 
-WinRE Entry {300209a8-...}:
-  Device     : ramdisk → {300209a9-...}
-  Path       : \windows
-  Description: Windows Recovery Environment
-```
+| 環境 | 位置 | BCD 入口 | 狀態 |
+|------|------|---------|------|
+| WinRE | `C:\Recovery\WindowsRE\Winre.wim`（509 MB）| `{300209a8-...}` | ✅ 已在 BCD，可直接用 |
+| 乾淨 WinPE | ADK: `amd64\en-us\winpe.wim`（325 MB）| 待添加 | ⚠️ 需添加 BCD 入口 |
+| copype 工作目錄 | `C:\DKTM_PE\media\sources\boot.wim` | 待添加 | ⚠️ 需添加 BCD 入口 |
 
 ---
 
-## 四、WinPE 環境評估
+## 七、DKTM 熱重啓安全性評估
 
-### 現有環境
-
-#### WinRE（可立即使用）
+### 7.1 整體流程
 
 ```
-C:\Recovery\WindowsRE\Winre.wim    509 MB
-BCD 入口: {300209a8-6279-11e6-90e0-000c295c2276}
+1. 凍結服務（spooler / SysMain / WSearch）
+2. 刷新磁盤緩衝區（FlushFileBuffers 對所有固定磁盤）
+3. 健康檢查（管理員權限 / 磁盤空間 / BCD 訪問）
+4. 備份 C:\Boot\BCD → C:\Boot\BCD.dktm.bak
+5. 啓用 SeBackupPrivilege + SeRestorePrivilege
+6. reg load HKLM\TmpDKTM C:\Boot\BCD
+7. RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE) 寫入 bootsequence 元素
+8. reg unload（自動刷回文件）
+9. 稽核驗證（重新 load、核對三個不變量）
+10. 驗證失敗 → 從備份還原，拋出錯誤
+11. reboot（shutdown /r /t 0）
+12. Boot Manager 讀取 bootsequence → 引導 WinPE/WinRE
+13. Boot Manager 自動清除 bootsequence
+14. WinPE 完成後重啓 → 返回 Windows
 ```
 
-- 優點：已配置在 BCD 中，無需額外設置
-- 缺點：進入後顯示 Windows 恢復環境菜單，需用戶交互
+### 7.2 環境兼容性
 
-#### Windows ADK WinPE Add-on（已安裝）
+| 風險項 | 評估 | 對策 |
+|--------|------|------|
+| bcdedit 被 ACL 封鎖 | ✅ 已通過直接文件操作繞過 | `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` |
+| 本地磁盤還原清除 BCD | ✅ 無本地還原軟件 | — |
+| lwdeploy 服務器推送重鏡像 | ⚠️ 無法預測，屬外部因素 | BCD 寫入後盡快重啓，縮短暴露窗口 |
+| lwclient 實時連線服務器 | ⚠️ 管理員可能實時看到操作 | 不建議在網咖環境用 real-run |
+| SeRestorePrivilege 默認啓用 | ✅ BCD 寫入無需額外提權 | — |
+| SeSystemEnvironmentPrivilege 禁用 | ✅ UEFI 變量路徑不可用，但 BCD 文件路徑可用 | — |
+| BCD 寫壞導致無法開機 | ✅ 已有備份+稽核+自動還原 | 三重保護 |
+| Boot Manager 未清除 bootsequence | ✅ 已在真機驗證，正常返回 Windows | — |
 
-```
-C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\
-  Windows Preinstallation Environment\
-    amd64\en-us\winpe.wim    325 MB  ← 乾淨的 WinPE 基礎鏡像
-    copype.cmd                        ← 構建工作目錄工具
-    MakeWinPEMedia.cmd                ← 製作開機媒體工具
-```
+### 7.3 核心安全保障
 
-#### copype 生成的工作目錄（已生成）
-
-```
-C:\DKTM_PE\
-  media\
-    Boot\BCD             ← copype 自帶 BCD（ramdisk 引導）
-    Boot\boot.sdi        ← 開機 SDI 文件
-    sources\boot.wim     ← WinPE 鏡像（325 MB）
-    bootmgr / bootmgr.efi
-```
-
-copype BCD 中 WinPE 入口 GUID：`{7619dcc9-fafe-11d9-b411-000476eba25f}`
-對應 Ramdisk Options GUID：`{7619dcc8-fafe-11d9-b411-000476eba25f}`
-
-### 注意事項
-
-**`{e18e67af-...}` 不是 WinPE**，是 `Windows Resume Application`（`\hiberfil.sys`），指向休眠恢復程序。誤用此 GUID 作為 bootsequence 目標會進入休眠恢復流程而非 WinPE。
-
----
-
-## 五、DKTM 熱重啓評估
-
-### 熱重啓流程
-
-```
-freeze_services → flush_buffers → health_check
-→ handover_control → commit_transition（寫 bootsequence）
-→ reboot → Boot Manager 讀取 bootsequence → 進入 WinPE/WinRE
-→ Boot Manager 自動清除 bootsequence → WinPE 完成後重啓 → 回 Windows
-```
-
-bootsequence（BCD 元素 `24000002`）是一次性的：Boot Manager 使用後自動清除，下次重啓回到正常 Windows，**無需 WinPE 端做任何額外操作**。
-
-### 當前配置（`config.yaml`）
-
-```yaml
-executor:
-  mode: real-run
-  transition_method: auto     # bcdedit → BCD 文件直寫 → WinRE 三重 fallback
-  winpe_entry_ids:
-    - "{300209a8-6279-11e6-90e0-000c295c2276}"   # WinRE
-  marker_path: "C:\\dktm_transition.marker"
-```
-
-### 安全機制
-
-| 機制 | 實現方式 |
-|------|---------|
-| 寫入前備份 | `C:\Boot\BCD` → `C:\Boot\BCD.dktm.bak` |
-| 寫入後稽核 | 驗證 bootmgr 存在、displayorder 非空、bootsequence 值正確 |
-| 驗證失敗自動還原 | 從 .bak 覆蓋回 BCD，並拋出錯誤 |
-| 回滾後驗證 | 確認 bootsequence 元素已消失 |
-
-### 網咖環境兼容性
-
-| 項目 | 結論 |
+| 機制 | 實現 |
 |------|------|
-| bcdedit 封鎖 | ✅ 已通過 BCD 文件直寫繞過 |
-| 磁盤還原軟件 | ✅ 本機無磁盤還原，BCD 修改持久生效 |
-| 管理員權限 | ✅ High Mandatory Level，足夠操作 |
-| Boot Manager 清除 bootsequence | ✅ 已在測試機驗證，正常返回 Windows |
-| lwdeploy 重鏡像風險 | ⚠️ 管理員手動觸發時整機恢復，屬不可控外部因素 |
+| 寫入前備份 | `C:\Boot\BCD` → `C:\Boot\BCD.dktm.bak` |
+| 寫入後稽核 | 驗證：① bootmgr 存在 ② displayorder 非空 ③ bootsequence 值正確 |
+| 稽核失敗自動還原 | 從 `.bak` 覆蓋回 `BCD`，拋出異常終止流程 |
+| 一次性 bootsequence | Boot Manager 使用後自動清除，失敗重啓也不會死循環 |
+| Fallback 鏈 | bcdedit 失敗 → BCD 文件直寫 → WinRE（reagentc） |
 
 ---
 
-## 六、待辦事項
+## 八、待辦事項
 
-- [ ] 將乾淨 WinPE（`{7619dcc9-...}`）加入系統 BCD，作為比 WinRE 更優先的熱重啓目標
-- [ ] 在 `boot.wim` 中加入 `startnet.cmd` 自動重啓腳本（`wpeutil reboot`）
-- [ ] 更新 `config.yaml`：WinPE 為主，WinRE 為 fallback
-- [ ] 優化熱重啓流程（health_check 前移、合并冗餘步驟、縮短等待時間）
+- [ ] 將乾淨 WinPE（`C:\DKTM_PE\media\sources\boot.wim`）加入系統 BCD
+- [ ] 在 `boot.wim` 中加入 `startnet.cmd` 自動重啓腳本（`wpeutil reboot`），讓 WinPE 無人工介入直接返回
+- [ ] 更新 `config.yaml`：乾淨 WinPE 為主，WinRE（`{300209a8-...}`）為 fallback
+- [ ] 優化熱重啓流程：health_check 前移到所有操作之前，合并冗餘的 flush 調用，縮短等待時間
