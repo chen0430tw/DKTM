@@ -80,9 +80,134 @@ class PlatformOps:
     _BOOTSEQUENCE_ELEM = "24000002"
     _DISPLAYORDER_ELEM = "24000001"
 
+    # Our own WinPE GUID — fixed because we write it ourselves via bcd_add_winpe.py.
+    # The WinRE GUID is machine-specific and must be discovered at runtime.
+    _DKTM_WINPE_GUID = "{7619dcc9-fafe-11d9-b411-000476eba25f}"
+
     def _bcd_file_available(self) -> bool:
         """Return True if C:\\Boot\\BCD is present and readable."""
         return os.path.isfile(self._BCD_FILE_PATH)
+
+    def _discover_bcd_entries(self) -> List[str]:
+        """Discover bootable WinPE/WinRE GUIDs from the BCD at runtime.
+
+        Search order:
+        1. Our own DKTM WinPE entry (fixed GUID, added by bcd_add_winpe.py).
+        2. Any WinRE OS loader found in BCD (type 0x10200003 with a
+           description containing "recovery" or "RE", case-insensitive).
+
+        Returns a list of GUIDs in priority order.  The list may be empty
+        if neither entry is present in the current BCD.
+        """
+        import winreg
+
+        if not self._bcd_file_available():
+            return []
+
+        r = subprocess.run(
+            ["reg", "load", self._TMP_HIVE, self._BCD_FILE_PATH],
+            capture_output=True, encoding="mbcs", errors="replace"
+        )
+        if r.returncode != 0:
+            self.logger.debug("_discover_bcd_entries: reg load failed")
+            return []
+
+        found: List[str] = []
+        try:
+            hive_short = self._TMP_HIVE[len("HKLM\\"):]
+            objects_path = f"{hive_short}\\Objects"
+
+            # Enumerate all BCD objects
+            try:
+                k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, objects_path,
+                                   0, winreg.KEY_READ)
+            except OSError:
+                return []
+
+            guids: List[str] = []
+            idx = 0
+            while True:
+                try:
+                    guids.append(winreg.EnumKey(k, idx))
+                    idx += 1
+                except OSError:
+                    break
+            winreg.CloseKey(k)
+
+            # Check each object
+            our_winpe_present = False
+            winre_guids: List[str] = []
+
+            for guid in guids:
+                base = f"{objects_path}\\{guid}"
+                try:
+                    dk = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                        base + "\\Description", 0, winreg.KEY_READ)
+                    obj_type, _ = winreg.QueryValueEx(dk, "Type")
+                    winreg.CloseKey(dk)
+                except OSError:
+                    continue
+
+                if isinstance(obj_type, bytes):
+                    obj_type = int.from_bytes(obj_type, "little")
+
+                if guid.lower() == self._DKTM_WINPE_GUID.lower():
+                    our_winpe_present = True
+                    continue
+
+                # WinRE OS loaders have type 0x10200003
+                if obj_type == 0x10200003:
+                    try:
+                        ek = winreg.OpenKey(
+                            winreg.HKEY_LOCAL_MACHINE,
+                            base + "\\Elements\\12000004", 0, winreg.KEY_READ
+                        )
+                        desc, _ = winreg.QueryValueEx(ek, "Element")
+                        winreg.CloseKey(ek)
+                        if isinstance(desc, str) and (
+                            "recovery" in desc.lower() or " re" in desc.lower()
+                        ):
+                            winre_guids.append(guid)
+                    except OSError:
+                        pass
+
+            if our_winpe_present:
+                found.append(self._DKTM_WINPE_GUID)
+            found.extend(winre_guids)
+
+        finally:
+            subprocess.run(
+                ["reg", "unload", self._TMP_HIVE],
+                capture_output=True, encoding="mbcs", errors="replace"
+            )
+
+        self.logger.info("Auto-discovered BCD entries: %s", found)
+        return found
+
+    def _resolve_winpe_entry_ids(self) -> List[str]:
+        """Return the effective WinPE entry list.
+
+        If the instance was configured with explicit IDs (from config.yaml),
+        use those.  Otherwise, auto-discover from the BCD.  Always logs the
+        source of the IDs so it's clear where they came from.
+        """
+        if self.winpe_entry_ids:
+            self.logger.info(
+                "Using configured WinPE entry IDs: %s", self.winpe_entry_ids
+            )
+            return self.winpe_entry_ids
+
+        discovered = self._discover_bcd_entries()
+        if discovered:
+            self.logger.info(
+                "Auto-discovered WinPE entry IDs: %s", discovered
+            )
+        else:
+            self.logger.warning(
+                "No WinPE/WinRE BCD entries found — "
+                "run bcd_add_winpe.py or configure winpe_entry_ids in config.yaml"
+            )
+        return discovered
 
     def _backup_bcd_file(self) -> None:
         """Copy C:\\Boot\\BCD to C:\\Boot\\BCD.dktm.bak before modification."""
@@ -541,7 +666,8 @@ class PlatformOps:
         RuntimeError
             If WinPE entry IDs are not configured or operation fails.
         """
-        entry_id = self.winpe_entry_ids[0] if self.winpe_entry_ids else None
+        effective_ids = self._resolve_winpe_entry_ids()
+        entry_id = effective_ids[0] if effective_ids else None
         self.logger.info("=== Committing DKTM Transition ===")
         self.logger.info("Transition method: %s", transition_method)
         if entry_id:
