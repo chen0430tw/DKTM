@@ -16,7 +16,7 @@ bcd_add_winpe.py — DKTM 干净 WinPE BCD 注册工具
   6. 稽核三不变量；失败自动还原
 
 固定 GUID : {7619dcc9-fafe-11d9-b411-000476eba25f}
-克隆来源  : {300209a8-6279-11e6-90e0-000c295c2276} (WinRE)
+克隆来源  : 运行时从 BCD 自动发现（Type=0x10200003 且 device 含 Winre.wim）
 
 用法:
     python bcd_add_winpe.py                        # 自动发现 ADK winpe.wim
@@ -46,7 +46,6 @@ from dktm.platform_windows import PlatformOps  # noqa: E402
 # ── 常量 ─────────────────────────────────────────────────────────────────────
 
 DKTM_PE_GUID  = "{7619dcc9-fafe-11d9-b411-000476eba25f}"
-WINRE_GUID    = "{300209a8-6279-11e6-90e0-000c295c2276}"
 
 TMP_HIVE      = r"HKLM\TmpDKTMPE"
 HIVE_SHORT    = "TmpDKTMPE"
@@ -247,6 +246,65 @@ def _read_elem_sz(guid: str, elem_id: str) -> str:
     return str(val)
 
 
+# ── WinRE GUID 自动发现 ───────────────────────────────────────────────────────
+
+def _find_winre_guid() -> str:
+    """在已挂载 hive 中枚举对象，自动找到 WinRE 条目的 GUID。
+
+    判断依据：
+      - Description\\Type == 0x10200003（OS loader）
+      - Elements\\11000001（device 描述符）的 UTF-16LE 内容包含 'winre.wim'
+
+    不依赖硬编码 GUID，可跨机器使用。
+    """
+    objects_path = f"{HIVE_SHORT}\\Objects"
+    try:
+        objects_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, objects_path)
+    except OSError as exc:
+        raise RuntimeError(f"无法打开 BCD Objects 键: {exc}")
+
+    guids = []
+    with objects_key:
+        i = 0
+        while True:
+            try:
+                guids.append(winreg.EnumKey(objects_key, i))
+                i += 1
+            except OSError:
+                break
+
+    for guid in guids:
+        if guid.lower() == DKTM_PE_GUID.lower():
+            continue  # 跳过 DKTM 自身，避免误匹配
+
+        desc_path = f"{HIVE_SHORT}\\Objects\\{guid}\\Description"
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, desc_path) as k:
+                t, _ = winreg.QueryValueEx(k, "Type")
+            if t != OSLOADER_TYPE:
+                continue
+        except OSError:
+            continue
+
+        dev_path = f"{HIVE_SHORT}\\Objects\\{guid}\\Elements\\{E_DEVICE}"
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, dev_path) as k:
+                dev_val, dev_type = winreg.QueryValueEx(k, "Element")
+            if dev_type != winreg.REG_BINARY:
+                continue
+            decoded = bytes(dev_val).decode("utf-16-le", errors="ignore").lower()
+            if "winre.wim" in decoded:
+                log.info("自动发现 WinRE GUID: %s", guid)
+                return guid
+        except OSError:
+            continue
+
+    raise RuntimeError(
+        "未在 BCD 中找到 WinRE 条目（Type=0x10200003 且 device 含 Winre.wim）。\n"
+        "请确认系统 WinRE 已启用（reagentc /info）。"
+    )
+
+
 # ── 设备描述符文件名补丁 ──────────────────────────────────────────────────────
 
 def _patch_wim_name(device_bytes: bytes, old_name: str, new_name: str) -> bytes:
@@ -354,13 +412,13 @@ def _verify(ops: PlatformOps, dst_wim: str) -> None:
 
 # ── 写入 BCD 条目 ─────────────────────────────────────────────────────────────
 
-def _write_entry(ops: PlatformOps, dst_wim: str) -> None:
+def _write_entry(ops: PlatformOps, dst_wim: str, winre_guid: str) -> None:
     """在已挂载 hive 中写入 DKTM WinPE 条目。"""
     dst_wim_name = os.path.basename(dst_wim)   # winpe.wim
 
     # 从 WinRE 读设备描述符，提取旧 wim 文件名
-    dev_raw  = _read_elem(WINRE_GUID, E_DEVICE)
-    odev_raw = _read_elem(WINRE_GUID, E_OSDEVICE)
+    dev_raw  = _read_elem(winre_guid, E_DEVICE)
+    odev_raw = _read_elem(winre_guid, E_OSDEVICE)
 
     decoded = dev_raw.decode("utf-16-le", errors="ignore")
     old_wim_name = next(
@@ -386,10 +444,10 @@ def _write_entry(ops: PlatformOps, dst_wim: str) -> None:
 
     # 从 WinRE 继承 path / systemroot / detecthal（保证 bootloader 与本机一致）
     # E_PATH 和 E_SYSTEMROOT 是 REG_SZ，必须用 _read_elem_sz / _set_sz
-    path_str       = _read_elem_sz(WINRE_GUID, E_PATH)
-    systemroot_str = _read_elem_sz(WINRE_GUID, E_SYSTEMROOT)
+    path_str       = _read_elem_sz(winre_guid, E_PATH)
+    systemroot_str = _read_elem_sz(winre_guid, E_SYSTEMROOT)
     try:
-        detecthal_raw = _read_elem(WINRE_GUID, E_DETECTHAL)
+        detecthal_raw = _read_elem(winre_guid, E_DETECTHAL)
     except OSError:
         detecthal_raw = b"\x01"
 
@@ -458,10 +516,12 @@ def add_winpe(user_wim: str | None = None, dry_run: bool = False) -> None:
     if dry_run:
         _hive_load(ops._BCD_FILE_PATH)
         try:
-            dev_raw = _read_elem(WINRE_GUID, E_DEVICE)
+            winre_guid = _find_winre_guid()
+            dev_raw = _read_elem(winre_guid, E_DEVICE)
         finally:
             _hive_unload()
         src_wim, dst_wim = _resolve_wim(user_wim, dev_raw)
+        log.info("[DRY-RUN] WinRE GUID: %s", winre_guid)
         log.info("[DRY-RUN] wim 源: %s", src_wim)
         log.info("[DRY-RUN] wim 目标: %s", dst_wim)
         log.info("[DRY-RUN] 跳过备份 / 写入 / 稽核")
@@ -475,8 +535,10 @@ def add_winpe(user_wim: str | None = None, dry_run: bool = False) -> None:
     success = False
     dst_wim = None
     try:
-        # 读 WinRE 设备描述符，推导 wim 路径
-        dev_raw = _read_elem(WINRE_GUID, E_DEVICE)
+        # 自动发现 WinRE GUID，读取其设备描述符，推导 wim 路径
+        winre_guid = _find_winre_guid()
+        log.info("WinRE GUID: %s", winre_guid)
+        dev_raw = _read_elem(winre_guid, E_DEVICE)
         src_wim, dst_wim = _resolve_wim(user_wim, dev_raw)
         log.info("wim 源: %s", src_wim)
         log.info("wim 目标: %s", dst_wim)
@@ -490,7 +552,7 @@ def add_winpe(user_wim: str | None = None, dry_run: bool = False) -> None:
         else:
             log.info("✓ winpe.wim 已存在于目标位置")
 
-        _write_entry(ops, dst_wim)
+        _write_entry(ops, dst_wim, winre_guid)
         success = True
     finally:
         # 与原流程一致：finally 只 unload + log，不在此处还原
