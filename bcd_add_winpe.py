@@ -193,6 +193,16 @@ def _set_sz(hkey: int, name: str, value: str) -> None:
         raise RuntimeError(f"RegSetValueExW sz({name!r}) => {ret}")
 
 
+def _set_multi_sz(hkey: int, name: str, values: list) -> None:
+    """Write REG_MULTI_SZ (type 7) — BCD object list 元素（如 displayorder）。"""
+    adv = ctypes.windll.advapi32
+    adv.RegSetValueExW.restype = ctypes.c_long
+    buf = ("".join(v + "\x00" for v in values) + "\x00").encode("utf-16-le")
+    ret = adv.RegSetValueExW(hkey, name, 0, 7, buf, len(buf))
+    if ret != 0:
+        raise RuntimeError(f"RegSetValueExW multi_sz({name!r}) => {ret}")
+
+
 # ── hive 挂载 / 卸载 ─────────────────────────────────────────────────────────
 
 def _hive_load(bcd_path: str) -> None:
@@ -408,17 +418,20 @@ def _write_entry(ops: PlatformOps, dst_wim: str) -> None:
     _elem(E_WINPE,       _set_binary, b"\x01")
     _elem(E_DESCRIPTION, _set_sz,     "DKTM WinPE")
 
-    # 更新 bootmgr displayorder
+    # 更新 bootmgr displayorder（REG_MULTI_SZ type=7，存 GUID 字符串列表）
     bootmgr   = "{" + ops._BOOTMGR_GUID.strip("{}") + "}"
     disp_path = f"{HIVE_SHORT}\\Objects\\{bootmgr}\\Elements\\{E_DISPORDER}"
     with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, disp_path) as k:
-        disp_val, _ = winreg.QueryValueEx(k, "Element")
-    disp_bytes = bytes(disp_val)
+        disp_val, disp_type = winreg.QueryValueEx(k, "Element")
 
-    new_guid_b = bytes.fromhex(ops._guid_to_binary_hex(DKTM_PE_GUID))
-    if new_guid_b not in disp_bytes:
+    if disp_type != 7:
+        raise RuntimeError(f"displayorder 元素类型非预期: type={disp_type}，期望 REG_MULTI_SZ=7")
+
+    disp_list = list(disp_val)
+    if DKTM_PE_GUID.lower() not in [g.lower() for g in disp_list]:
+        disp_list.append(DKTM_PE_GUID)
         hk = _reg_create(disp_path)
-        _set_binary(hk, "Element", disp_bytes + new_guid_b)
+        _set_multi_sz(hk, "Element", disp_list)
         _reg_close(hk)
         log.info("✓ bootmgr displayorder 已追加 %s", DKTM_PE_GUID)
     else:
