@@ -88,7 +88,7 @@ python tools/setup_bcd.py --pe-path D:\DKTM_PE\media
 `HKLM\BCD00000000` 的 ACL 只允许 SYSTEM 写入，bcdedit 会报"拒绝访问"。
 C: 盘受写过滤（kdisk），每次重启后还原，BCD 修改不跨重启保留。
 
-**步骤 1：构建 WinPE 镜像（每台机器做一次，放到持久盘）**
+**步骤 1：`tools/build_pe.py` — 构建 WinPE 镜像（每台机器做一次，放到持久盘）**
 
 ```bash
 python tools/build_pe.py --output D:\DKTM_PE
@@ -104,13 +104,13 @@ DISM 挂载 → 写入 startnet.cmd（wpeinit + wpeutil reboot）→ DISM 提交
 
 `D:\DKTM_PE` 在持久盘，跨重启保留，只需做一次。
 
-**步骤 2：每次开机后注册 BCD（per-session，必须每次执行）**
+**步骤 2：`bcd_add_winpe.py` — 每次开机后注册 BCD（per-session，必须每次执行）**
 
 ```bash
 python bcd_add_winpe.py --wim D:\DKTM_PE\media\sources\boot.wim
 ```
 
-此脚本通过 `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` 绕过 BCD ACL，同时将 WIM 复制到 `C:\Recovery\WindowsRE\winpe.wim`（Boot Manager 读取位置）。两者都在 C: 上，重启后消失，因此每次开机都需重跑。
+通过 `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` 绕过 BCD ACL，无需 bcdedit，无需 SYSTEM 权限。同时将 WIM 复制到 `C:\Recovery\WindowsRE\winpe.wim`（Boot Manager 读取位置）。BCD 条目和 WIM 都在 C: 上，重启后随 kdisk 还原消失，所以每次开机都要重跑。
 
 ---
 
