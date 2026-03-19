@@ -66,12 +66,20 @@ python hot_restart.py --dry-run
 **方案 B：添加干净 WinPE（已安装 Windows ADK）**
 
 ```bash
-# 1. 用 ADK copype 构建 WinPE 工作目录
-python C:\Users\Administrator\run_copype.py
+# 1. 用 ADK copype 构建 WinPE 工作目录（每台机器做一次，WIM 放在持久盘）
+python tools/build_pe.py
 
-# 2. 把干净 WinPE 写入系统 BCD（一次性）
-python C:\Users\Administrator\bcd_add_winpe.py
+# 2. 每次开机后，把干净 WinPE 写入系统 BCD（必须每次会话执行，见下方说明）
+python bcd_add_winpe.py
+# 或指定已构建的 WIM：
+python bcd_add_winpe.py --wim D:\DKTM_PE\media\sources\boot.wim
 ```
+
+> ⚠️ **每次开机都要重跑 `bcd_add_winpe.py`**
+> 系统 BCD 存放在 `C:\Boot\BCD`，而 C: 盘受写过滤保护（kdisk），每次重启后还原为
+> 服务器镜像，上次写入的 BCD 条目全部消失。`bcd_add_winpe.py` 是 **per-session 工具**，
+> 不是一次性安装步骤。同理，WIM 文件会被复制到 `C:\Recovery\WindowsRE\winpe.wim`，
+> 重启后也会消失，由脚本在每次会话开始时重新就位。
 
 完成后，程序自动优先使用干净 WinPE（`{7619dcc9-fafe-11d9-b411-000476eba25f}`），以 WinRE 为 fallback。
 
@@ -136,6 +144,7 @@ executor:
 DKTM/
 ├── gui.py                  # 图形界面（推荐入口）
 ├── hot_restart.py          # 命令行入口
+├── bcd_add_winpe.py        # ★ per-session BCD 写入工具（受限环境必用）
 ├── config.yaml             # 配置文件
 ├── dktm/
 │   ├── platform_windows.py # BCD 写入 / 权限 / 服务 / 磁盘刷新
@@ -144,11 +153,12 @@ DKTM/
 │   ├── executor.py         # 命令执行器
 │   └── config.py           # 配置加载 / 合并
 ├── docs/
-│   ├── cafe_env_analysis.md  # 网咖环境调研（BCD ACL / 权限 / 重置机制）
+│   ├── cafe_env_analysis.md  # 网咖环境调研（BCD ACL / 权限 / 写过滤机制 / GUID 来源）
+│   ├── testing_notes.md      # 实机测试记录与踩坑总结
 │   └── WINPE_BUILD_GUIDE.md
 └── tools/
-    ├── build_pe.py         # WinPE 构建辅助
-    └── setup_bcd.py        # BCD 配置辅助
+    ├── build_pe.py         # WinPE 构建辅助（copype + DISM）
+    └── setup_bcd.py        # ⚠️ 仅限 bcdedit 可用的标准环境；受限环境请用 bcd_add_winpe.py
 ```
 
 ---
@@ -195,7 +205,18 @@ wpeinit 完成后立刻重启，Boot Manager 因 bootsequence 已被自动清除
 **重启后没有进 WinPE？**
 
 运行 `python hot_restart.py --dry-run` 确认日志中有 `Auto-discovered BCD entries` 且非空。
-若为空，运行 `bcd_add_winpe.py` 添加 WinPE 条目，或确认系统有启用的 WinRE（`reagentc /info`）。
+若为空，运行 `python bcd_add_winpe.py` 添加 WinPE 条目，或确认系统有启用的 WinRE（`reagentc /info`）。
+在受写过滤保护的网咖环境，**每次开机后都需要重跑 `bcd_add_winpe.py`**，因为 C: 盘重启后还原。
+
+**WIM 文件在哪？各路径的关系是什么？**
+
+| 路径 | 说明 | 持久性 |
+|------|------|--------|
+| `D:\DKTM_PE\media\sources\boot.wim` | copype 构建产物，持久盘存储 | 跨重启保留 |
+| `C:\Recovery\WindowsRE\winpe.wim` | `bcd_add_winpe.py` 每次会话复制至此 | 重启后消失 |
+| BCD device 元素中的路径 | `\Recovery\WindowsRE\winpe.wim`（C: 分区内） | 随 C: 一起清空 |
+
+Boot Manager 从 `C:\Recovery\WindowsRE\winpe.wim` 启动，因此每次会话 `bcd_add_winpe.py` 会同时完成两件事：复制 WIM 文件到位 + 写入 BCD 条目。
 
 **网咖环境能用吗？**
 

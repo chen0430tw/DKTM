@@ -13,6 +13,16 @@ Features:
 - Configures ramdisk options
 - Saves GUID to configuration
 - Validates setup
+
+⚠️  RESTRICTED ENVIRONMENT WARNING
+------------------------------------
+This script uses `bcdedit /create` internally. In environments where
+HKLM\\BCD00000000 ACL blocks non-SYSTEM writes (e.g. cafe diskless clients),
+bcdedit will fail with "Access is denied".
+
+For those environments, use `bcd_add_winpe.py` (project root) instead.
+It bypasses the ACL via RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE) and
+must be re-run every session because C:\\ is reset by the write filter on reboot.
 """
 
 import os

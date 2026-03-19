@@ -2,8 +2,8 @@
 
 **Dynamic Kernel Transition Mechanism - Architecture & Design Documentation**
 
-Version: 1.0.0
-Last Updated: 2025-12-26
+Version: 1.1.0
+Last Updated: 2026-03-20
 
 ---
 
@@ -158,21 +158,30 @@ User clicks button → SOSA detects safety → Auto-switch to PE → Kernel rese
 ### Layer 6: Automation Tools
 
 ```
-┌──────────────────────┐  ┌──────────────────────────┐
-│  WinPE Builder       │  │  BCD Configurator        │
-│  (build_pe.py)       │  │  (setup_bcd.py)          │
-│  ├─ ADK detection    │  │  ├─ Entry creation       │
-│  ├─ copype automation│  │  ├─ Ramdisk config       │
-│  ├─ Script injection │  │  ├─ GUID extraction      │
-│  └─ Deployment       │  │  └─ Config persistence   │
-└──────────────────────┘  └──────────────────────────┘
+┌──────────────────────┐  ┌──────────────────────────────────────────┐
+│  WinPE Builder       │  │  BCD Registrar (per-session)             │
+│  (tools/build_pe.py) │  │  (bcd_add_winpe.py — project root)       │
+│  ├─ ADK detection    │  │  ├─ reg load / unload BCD hive           │
+│  ├─ copype automation│  │  ├─ Clone WinRE device descriptor        │
+│  ├─ Script injection │  │  ├─ Patch WIM filename in-place (0x88)   │
+│  └─ Deploy to D:\    │  │  ├─ REG_OPTION_BACKUP_RESTORE (ACL skip) │
+└──────────────────────┘  │  ├─ Copy WIM to C:\Recovery\WindowsRE\   │
+                           │  └─ 3-invariant audit + auto-rollback    │
+                           └──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  BCD Configurator (tools/setup_bcd.py)                               │
+│  ⚠️  Uses bcdedit — only works when HKLM\BCD00000000 ACL is open.   │
+│      In restricted environments (cafe/diskless), use bcd_add_winpe   │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 **Responsibilities:**
-- Automated WinPE image construction
-- DKTM recovery script injection
-- BCD entry lifecycle management
-- Configuration validation
+- `build_pe.py`: Automated WinPE image construction (one-time per machine)
+- `bcd_add_winpe.py`: Per-session BCD registration in ACL-blocked environments.
+  Must be re-run every session because C:\\ is reset by write filter on reboot.
+  Also copies WIM from persistent storage (D:\\) to C:\\ each session.
+- `setup_bcd.py`: Legacy BCD helper for unrestricted environments only.
 
 ---
 
@@ -239,25 +248,29 @@ START: python install.py
     ├─ C:\DKTM
     └─ C:\DKTM\logs
     ↓
-[Build WinPE] (tools/build_pe.py)
+[Build WinPE] (tools/build_pe.py)  ← one-time per machine
     ├─ Detect ADK path
     ├─ Run copype.cmd → Generate base PE
     ├─ Mount boot.wim
-    ├─ Inject dktm_recovery.cmd
-    ├─ Configure startnet.cmd
+    ├─ Configure startnet.cmd (wpeinit → wpeutil reboot)
     ├─ Commit and unmount
-    └─ Deploy to C:\WinPE
+    └─ Deploy to D:\DKTM_PE\media\sources\boot.wim  (persistent disk)
     ↓
-[Setup BCD] (tools/setup_bcd.py)
-    ├─ Create BCD entry → Extract GUID
-    ├─ Configure ramdisk options
-    ├─ Set WinPE boot parameters
-    ├─ Validate configuration
-    └─ Save to dktm_config.yaml
+[Register BCD] (bcd_add_winpe.py)  ← MUST re-run every session
+    ├─ Copy boot.wim → C:\Recovery\WindowsRE\winpe.wim
+    ├─ reg load HKLM\TmpDKTMPE C:\Boot\BCD
+    ├─ Clone WinRE device descriptor, patch WIM filename at offset 0x88
+    ├─ Write OS loader entry {7619dcc9-...} via REG_OPTION_BACKUP_RESTORE
+    ├─ Append GUID to bootmgr displayorder (REG_MULTI_SZ)
+    ├─ reg unload → 3-invariant audit
+    └─ Save to config.yaml (winpe_entry_ids auto-populated)
+    ↓
+NOTE: In standard (unrestricted) environments, tools/setup_bcd.py can
+      substitute for the Register BCD step using bcdedit.
     ↓
 [Verify Installation]
     ├─ Check WinPE files exist
-    ├─ Validate dktm_config.yaml
+    ├─ Validate config.yaml
     └─ Verify BCD GUID
     ↓
 END: Installation complete ✅
@@ -269,7 +282,7 @@ END: Installation complete ✅
 START: python hot_restart.py
     ↓
 [Initialize DKTM]
-    ├─ Load dktm_config.yaml
+    ├─ Load config.yaml
     ├─ Initialize SOSA adapter
     ├─ Initialize Retina probe
     └─ Load platform operations
@@ -531,7 +544,7 @@ success = builder.build(deploy=True)
 **Description**: Creates and configures BCD entry for DKTM WinPE.
 
 **Parameters:**
-- `save_config` (bool): If True, saves GUID to dktm_config.yaml
+- `save_config` (bool): If True, saves GUID to config.yaml
 
 **Process:**
 1. Create new BCD entry with `bcdedit /create`
@@ -561,7 +574,8 @@ print(f"WinPE entry created: {guid}")
 DKTM/
 ├─ [USER INTERFACE]
 │  ├─ install.py              # Entry point: one-click setup
-│  └─ hot_restart.py          # Entry point: one-click restart
+│  ├─ hot_restart.py          # Entry point: one-click restart
+│  └─ bcd_add_winpe.py        # Per-session BCD registrar (ACL-blocked envs)
 │
 ├─ [CORE PACKAGE]
 │  └─ dktm/
@@ -586,8 +600,8 @@ DKTM/
 │
 ├─ [AUTOMATION TOOLS]
 │  └─ tools/
-│     ├─ build_pe.py          # WinPE builder
-│     └─ setup_bcd.py         # BCD configurator
+│     ├─ build_pe.py          # WinPE builder (one-time, ADK-based)
+│     └─ setup_bcd.py         # BCD configurator (bcdedit; standard envs only)
 │
 ├─ [QUALITY ASSURANCE]
 │  └─ check_code.py           # Code quality checker
@@ -598,23 +612,25 @@ DKTM/
 │  ├─ repo_index.json         # Structured index
 │  ├─ repo_schema.md          # This file
 │  └─ docs/
-│     └─ WINPE_BUILD_GUIDE.md # Technical guide
+│     ├─ WINPE_BUILD_GUIDE.md   # Technical guide
+│     ├─ cafe_env_analysis.md   # Cafe env: BCD ACL, write filter, GUID discovery
+│     └─ testing_notes.md       # Real-machine test log and gotchas
 │
 └─ [CONFIGURATION]
    ├─ requirements.txt        # Python dependencies
-   └─ dktm_config.yaml        # Generated during install
+   └─ config.yaml        # Generated during install
 ```
 
 ### File Categories
 
 | Category | Files | Purpose |
 |----------|-------|---------|
-| **Entry Points** | install.py, hot_restart.py | User-facing commands |
+| **Entry Points** | install.py, hot_restart.py, bcd_add_winpe.py | User-facing commands |
 | **Core Logic** | dktm/*.py | Algorithm and orchestration |
 | **Automation** | tools/*.py | PE build, BCD setup |
 | **Platform** | platform_*.py | OS-specific operations |
 | **Quality** | check_code.py | Bug detection |
-| **Config** | requirements.txt, dktm_config.yaml | Dependencies and settings |
+| **Config** | requirements.txt, config.yaml | Dependencies and settings |
 | **Docs** | *.md, docs/*.md | User and technical guides |
 
 ---
@@ -637,7 +653,7 @@ python install.py
 # - Creates C:\DKTM directories
 # - Builds WinPE with recovery scripts
 # - Creates BCD entry
-# - Saves configuration to dktm_config.yaml
+# - Saves configuration to config.yaml
 ```
 
 **Expected Output:**
@@ -1028,7 +1044,7 @@ dktm = DKTM(config, hooks={
 
 ### Why YAML for configuration?
 
-**Decision**: Use YAML for `dktm_config.yaml`.
+**Decision**: Use YAML for `config.yaml`.
 
 **Rationale:**
 - Human-readable (users can inspect/edit)
