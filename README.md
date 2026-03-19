@@ -51,68 +51,76 @@
 pip install pyyaml
 ```
 
-### 2. 配置 WinPE（首次使用，每台机器做一次）
+---
 
-**方案 A：用系统自带 WinRE（零配置，推荐先试）**
+### 2. 配置 WinPE
 
-系统若有 WinRE，程序会自动发现，无需任何配置。验证：
+根据你的环境选择对应路径：
+
+---
+
+#### 标准环境（bcdedit 可用）
+
+普通 Windows 10/11，没有写过滤或 ACL 限制。
+
+**用系统自带 WinRE（零配置）**
 
 ```bash
 python hot_restart.py --dry-run
 ```
 
-日志中出现 `Auto-discovered BCD entries` 且列表非空即可。
+日志出现 `Auto-discovered BCD entries` 且非空即可直接使用。
 
-**方案 B：添加干净 WinPE（已安装 Windows ADK）**
+**或用干净 WinPE（已安装 ADK）**
 
-**步骤 1：构建 WinPE 镜像（每台机器做一次，输出到持久盘 D:）**
+```bash
+# 构建 WinPE 镜像（一次性）
+python tools/build_pe.py --output D:\DKTM_PE
+
+# 注册 BCD 条目（一次性，bcdedit 可用时直接写入）
+python tools/setup_bcd.py --pe-path D:\DKTM_PE\media
+```
+
+---
+
+#### 受限环境（bcdedit 被 ACL 封锁，如网咖无盘客户端）
+
+`HKLM\BCD00000000` 的 ACL 只允许 SYSTEM 写入，bcdedit 会报"拒绝访问"。
+C: 盘受写过滤（kdisk），每次重启后还原，BCD 修改不跨重启保留。
+
+**步骤 1：构建 WinPE 镜像（每台机器做一次，放到持久盘）**
 
 ```bash
 python tools/build_pe.py --output D:\DKTM_PE
 ```
 
-内部流程：
+构建流程：
 ```
-ADK copype.cmd amd64 D:\DKTM_PE
-    → 生成 D:\DKTM_PE\media\sources\boot.wim（基础 WinPE）
+copype.cmd amd64 D:\DKTM_PE
+    → D:\DKTM_PE\media\sources\boot.wim
 
-DISM /Mount-Image boot.wim → D:\DKTM_PE\mount\
-
-写入 startnet.cmd（内容：wpeinit + wpeutil reboot）
-
-DISM /Unmount-Image /Commit
+DISM 挂载 → 写入 startnet.cmd（wpeinit + wpeutil reboot）→ DISM 提交卸载
 ```
 
-构建完成后，`D:\DKTM_PE\media\sources\boot.wim` 即为最终使用的 WinPE 镜像，存放在持久盘，跨重启保留。
+`D:\DKTM_PE` 在持久盘，跨重启保留，只需做一次。
 
-**步骤 2：每次开机后注册 BCD（必须每次会话执行）**
+**步骤 2：每次开机后注册 BCD（per-session，必须每次执行）**
 
 ```bash
 python bcd_add_winpe.py --wim D:\DKTM_PE\media\sources\boot.wim
 ```
 
-> ⚠️ **每次开机都要重跑 `bcd_add_winpe.py`**
-> 系统 BCD 存放在 `C:\Boot\BCD`，而 C: 盘受写过滤保护（kdisk），每次重启后还原为
-> 服务器镜像，上次写入的 BCD 条目全部消失。`bcd_add_winpe.py` 是 **per-session 工具**，
-> 不是一次性安装步骤。同理，WIM 文件会被复制到 `C:\Recovery\WindowsRE\winpe.wim`，
-> 重启后也会消失，由脚本在每次会话开始时重新就位。
+此脚本通过 `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` 绕过 BCD ACL，同时将 WIM 复制到 `C:\Recovery\WindowsRE\winpe.wim`（Boot Manager 读取位置）。两者都在 C: 上，重启后消失，因此每次开机都需重跑。
 
-完成后，程序自动优先使用干净 WinPE（`{7619dcc9-fafe-11d9-b411-000476eba25f}`），以 WinRE 为 fallback。
+---
 
 ### 3. 使用
 
-**图形界面（推荐）**
-
 ```bash
-python gui.py
-```
-
-**命令行**
-
-```bash
-python hot_restart.py          # 正式执行（有 5 秒取消窗口）
-python hot_restart.py --force  # 跳过确认直接执行
+python gui.py                    # 图形界面（推荐）
+python hot_restart.py            # 命令行（有 5 秒取消窗口）
 python hot_restart.py --dry-run  # 模拟，不做任何系统变更
+python hot_restart.py --force    # 跳过确认直接执行
 ```
 
 ---
