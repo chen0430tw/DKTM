@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-DKTM One-Click Installer
-=========================
+DKTM One-Click Installer — 标准环境专用
+=========================================
 
-Automatically sets up DKTM hot restart system.
+适用于 bcdedit 可正常使用的标准 Windows 环境（非网咖无盘客户端）。
+受限环境（bcdedit 被 ACL 封锁）请使用 bcd_add_winpe.py。
 
 Usage:
-    python install.py              # Full automatic installation
-    python install.py --skip-pe    # Skip WinPE build (use existing)
+    python install.py              # 全自动安装
+    python install.py --skip-pe    # 跳过 WinPE 构建（已有 D:\DKTM_PE）
 
 This script:
-1. Builds WinPE with DKTM recovery scripts
-2. Creates BCD entry
-3. Configures DKTM
-4. Validates setup
+1. 构建 WinPE 镜像到 D:\DKTM_PE（调用 tools/build_pe.py）
+2. 注册 BCD 条目（调用 tools/setup_bcd.py，需要 bcdedit 可用）
+3. 写入 config.yaml
+4. 验证安装结果
 
 After installation, use:
     python hot_restart.py          # One-click hot restart!
@@ -22,6 +23,11 @@ After installation, use:
 import sys
 import os
 import logging
+
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import argparse
 import subprocess
 from pathlib import Path
@@ -134,7 +140,7 @@ class DKTMInstaller:
         if self.skip_pe:
             self.logger.info("Skipping WinPE build (--skip-pe)")
             # Verify existing WinPE
-            if not Path(r"C:\WinPE\sources\boot.wim").exists():
+            if not Path(r"D:\DKTM_PE\sources\boot.wim").exists():
                 self.logger.error("✗ No existing WinPE found at C:\\WinPE")
                 self.logger.error("  Remove --skip-pe to build automatically")
                 return False
@@ -149,7 +155,7 @@ class DKTMInstaller:
 
         try:
             result = subprocess.run(
-                [sys.executable, str(build_script), "--deploy"],
+                [sys.executable, str(build_script), "--output", r"D:\DKTM_PE"],
                 check=True,
                 capture_output=False  # Show output in real-time
             )
@@ -188,7 +194,7 @@ class DKTMInstaller:
 
     def ensure_config(self, transition_method: str) -> bool:
         """Ensure a configuration file exists with transition settings."""
-        config_file = self.project_root / "dktm_config.yaml"
+        config_file = self.project_root / "config.yaml"
         try:
             import yaml
         except ImportError:
@@ -229,8 +235,8 @@ class DKTMInstaller:
 
         # Check WinPE files
         required_files = [
-            Path(r"C:\WinPE\sources\boot.wim"),
-            Path(r"C:\WinPE\boot\boot.sdi"),
+            Path(r"D:\DKTM_PE\sources\boot.wim"),
+            Path(r"D:\DKTM_PE\boot\boot.sdi"),
         ]
 
         for file_path in required_files:
@@ -239,7 +245,7 @@ class DKTMInstaller:
                 return False
 
         # Check configuration
-        config_file = self.project_root / "dktm_config.yaml"
+        config_file = self.project_root / "config.yaml"
         if not config_file.exists():
             self.logger.warning("⚠️  Configuration file not found")
             self.logger.warning("  BCD setup may have failed")
@@ -316,7 +322,7 @@ class DKTMInstaller:
         self.logger.info("\nYou can now use:")
         self.logger.info("  python hot_restart.py --dry-run    # Test the system")
         self.logger.info("  python hot_restart.py              # One-click hot restart!")
-        self.logger.info("\nConfiguration file: dktm_config.yaml")
+        self.logger.info("\nConfiguration file: config.yaml")
         self.logger.info("Logs directory: C:\\DKTM\\logs")
         return 0
 

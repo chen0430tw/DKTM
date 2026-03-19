@@ -166,23 +166,41 @@ executor:
 
 ```
 DKTM/
-├── gui.py                  # 图形界面（推荐入口）
-├── hot_restart.py          # 命令行入口
-├── bcd_add_winpe.py        # ★ per-session BCD 写入工具（受限环境必用）
-├── config.yaml             # 配置文件
+│
+│  ── 入口 ──────────────────────────────────────────────────────
+├── hot_restart.py          # 命令行入口（所有环境）
+├── gui.py                  # 图形界面入口（所有环境）
+├── install.py              # 一键安装器（仅标准环境，依赖 bcdedit）
+├── bcd_add_winpe.py        # BCD 注册工具（受限环境，per-session）
+│
+│  ── 配置 ──────────────────────────────────────────────────────
+├── config.yaml             # 运行时配置（winpe_entry_ids / mode 等）
+├── requirements.txt        # Python 依赖
+│
+│  ── 核心包 ─────────────────────────────────────────────────────
 ├── dktm/
-│   ├── platform_windows.py # BCD 写入 / 权限 / 服务 / 磁盘刷新
-│   ├── platform_posix.py   # POSIX 占位（dry-run 用）
+│   ├── platform_windows.py # Windows 实现：BCD / 权限 / 服务 / 磁盘刷新
+│   ├── platform_posix.py   # POSIX 占位（非 Windows 下 dry-run 用）
 │   ├── platform_ops.py     # 平台抽象层
 │   ├── executor.py         # 命令执行器
-│   └── config.py           # 配置加载 / 合并
-├── docs/
-│   ├── cafe_env_analysis.md  # 网咖环境调研（BCD ACL / 权限 / 写过滤机制 / GUID 来源）
-│   ├── testing_notes.md      # 实机测试记录与踩坑总结
-│   └── WINPE_BUILD_GUIDE.md
-└── tools/
-    ├── build_pe.py         # WinPE 构建辅助（copype + DISM）
-    └── setup_bcd.py        # ⚠️ 仅限 bcdedit 可用的标准环境；受限环境请用 bcd_add_winpe.py
+│   ├── plan.py             # 转换计划生成
+│   ├── command_dict.py     # 命令定义表
+│   ├── config.py           # 配置加载 / 合并
+│   ├── adapter.py          # SOSA 适配器
+│   ├── spark_seed_sosa.py  # SOSA 算法
+│   └── retina_probe.py     # 系统状态探测
+│
+│  ── 工具 ──────────────────────────────────────────────────────
+├── tools/
+│   ├── build_pe.py         # WinPE 构建（copype + DISM，所有环境）
+│   └── setup_bcd.py        # BCD 配置（仅标准环境，依赖 bcdedit）
+│
+│  ── 文档 ──────────────────────────────────────────────────────
+└── docs/
+    ├── cafe_env_analysis.md  # 网咖环境调研（写过滤 / BCD ACL / GUID 来源）
+    ├── testing_notes.md      # 实机测试记录与踩坑总结
+    ├── WINPE_BUILD_GUIDE.md  # WinPE 构建指南
+    └── BUGFIXES.md           # Bug 修复记录
 ```
 
 ---
