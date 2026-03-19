@@ -18,6 +18,12 @@ Features:
 
 import os
 import sys
+
+# Fix UnicodeEncodeError on narrow code pages (e.g. cp950 in Taiwan locales)
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import subprocess
 import shutil
 import logging
@@ -89,14 +95,23 @@ class WinPEBuilder:
             self.logger.warning(f"Output directory exists, cleaning up...")
             shutil.rmtree(self.output_dir)
 
+        adk_root = str(self.adk_path / "Assessment and Deployment Kit")
         copype = self.adk_path / "Assessment and Deployment Kit" / "Windows Preinstallation Environment" / "copype.cmd"
+
+        # copype.cmd requires these three variables to be set; they are normally
+        # injected by DandISetEnv.bat but that bat is not inherited by subprocess.
+        env = os.environ.copy()
+        env["WinPERoot"]   = adk_root + r"\Windows Preinstallation Environment"
+        env["OSCDImgRoot"] = adk_root + r"\Deployment Tools\amd64\Oscdimg"
+        env["DISMRoot"]    = adk_root + r"\Deployment Tools\amd64\DISM"
 
         try:
             result = subprocess.run(
-                [str(copype), self.arch, str(self.output_dir)],
+                ["cmd", "/c", str(copype), self.arch, str(self.output_dir)],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                env=env,
             )
             self.logger.info("✓ WinPE base structure created")
             return True
@@ -281,21 +296,9 @@ wpeutil reboot
         mount_dir = self.output_dir / "mount"
         startnet = mount_dir / "Windows" / "System32" / "startnet.cmd"
 
-        startnet_content = r"""@echo off
-REM DKTM WinPE Auto-Start Script
-
-wpeinit
-
-REM Execute DKTM recovery script
-echo.
-echo Starting DKTM Hot Restart Recovery...
-call X:\DKTM\dktm_recovery.cmd
-
-REM 如果 recovery 没有触发 reboot（异常返回），才掉进命令列
-echo.
-echo [WARN] Recovery script returned (no reboot). Dropping to shell...
-cmd
-"""
+        # WinPE 的唯一任务：初始化网络/驱动后立刻重启，由 Boot Manager 清除
+        # bootsequence 并引导回 Windows。不需要 marker 检测或复杂逻辑。
+        startnet_content = "@echo off\r\nwpeinit\r\nwpeutil reboot\r\n"
 
         try:
             # Use mbcs encoding for Windows batch files (equivalent to system default)
@@ -384,8 +387,7 @@ cmd
             ("Creating WinPE base", self.run_copype),
             ("Creating mount point", self.create_mount_point),
             ("Mounting WinPE image", self.mount_wim),
-            ("Injecting DKTM scripts", self.inject_dktm_scripts),
-            ("Configuring auto-start", self.configure_startnet),
+            ("Configuring startnet.cmd", self.configure_startnet),
             ("Unmounting image", lambda: self.unmount_wim(commit=True)),
         ]
 
@@ -410,8 +412,8 @@ def main():
     parser = argparse.ArgumentParser(description="DKTM WinPE Auto-Builder")
     parser.add_argument(
         "--output",
-        default="C:\\WinPE_DKTM_Build",
-        help="Output directory for WinPE files"
+        default="D:\\DKTM_PE",
+        help="Output directory for WinPE files (default: D:\\DKTM_PE, persistent disk)"
     )
     parser.add_argument(
         "--arch",

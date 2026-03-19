@@ -65,13 +65,29 @@ python hot_restart.py --dry-run
 
 **方案 B：添加干净 WinPE（已安装 Windows ADK）**
 
-```bash
-# 1. 用 ADK copype 构建 WinPE 工作目录（每台机器做一次，WIM 放在持久盘）
-python tools/build_pe.py
+**步骤 1：构建 WinPE 镜像（每台机器做一次，输出到持久盘 D:）**
 
-# 2. 每次开机后，把干净 WinPE 写入系统 BCD（必须每次会话执行，见下方说明）
-python bcd_add_winpe.py
-# 或指定已构建的 WIM：
+```bash
+python tools/build_pe.py --output D:\DKTM_PE
+```
+
+内部流程：
+```
+ADK copype.cmd amd64 D:\DKTM_PE
+    → 生成 D:\DKTM_PE\media\sources\boot.wim（基础 WinPE）
+
+DISM /Mount-Image boot.wim → D:\DKTM_PE\mount\
+
+写入 startnet.cmd（内容：wpeinit + wpeutil reboot）
+
+DISM /Unmount-Image /Commit
+```
+
+构建完成后，`D:\DKTM_PE\media\sources\boot.wim` 即为最终使用的 WinPE 镜像，存放在持久盘，跨重启保留。
+
+**步骤 2：每次开机后注册 BCD（必须每次会话执行）**
+
+```bash
 python bcd_add_winpe.py --wim D:\DKTM_PE\media\sources\boot.wim
 ```
 
