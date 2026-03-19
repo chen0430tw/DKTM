@@ -193,14 +193,18 @@ DKTM/
 │  ── 工具 ──────────────────────────────────────────────────────
 ├── tools/
 │   ├── build_pe.py         # WinPE 构建（copype + DISM，所有环境）
-│   └── setup_bcd.py        # BCD 配置（仅标准环境，依赖 bcdedit）
+│   ├── setup_bcd.py        # BCD 配置（仅标准环境，依赖 bcdedit）
+│   └── check_code.py       # 代码质量检查
 │
 │  ── 文档 ──────────────────────────────────────────────────────
 └── docs/
-    ├── cafe_env_analysis.md  # 网咖环境调研（写过滤 / BCD ACL / GUID 来源）
-    ├── testing_notes.md      # 实机测试记录与踩坑总结
-    ├── WINPE_BUILD_GUIDE.md  # WinPE 构建指南
-    └── BUGFIXES.md           # Bug 修复记录
+    ├── cafe_env_analysis.md      # 网咖环境调研（写过滤 / BCD ACL / GUID 来源）
+    ├── testing_notes.md          # 实机测试记录与踩坑总结
+    ├── WINPE_BUILD_GUIDE.md      # WinPE 构建指南
+    ├── BUGFIXES.md               # Bug 修复记录
+    ├── THEORY_TO_IMPLEMENTATION.md  # 理论与实现映射分析
+    ├── repo_schema.md            # 架构文档
+    └── repo_index.json           # 结构化索引
 ```
 
 ---
