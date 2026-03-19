@@ -156,18 +156,21 @@ class PlatformOps:
                     continue
 
                 # WinRE OS loaders have type 0x10200003
+                # Detect by device element containing "winre.wim" (locale-independent)
                 if obj_type == 0x10200003:
                     try:
                         ek = winreg.OpenKey(
                             winreg.HKEY_LOCAL_MACHINE,
-                            base + "\\Elements\\12000004", 0, winreg.KEY_READ
+                            base + "\\Elements\\11000001", 0, winreg.KEY_READ
                         )
-                        desc, _ = winreg.QueryValueEx(ek, "Element")
+                        dev_val, dev_type = winreg.QueryValueEx(ek, "Element")
                         winreg.CloseKey(ek)
-                        if isinstance(desc, str) and (
-                            "recovery" in desc.lower() or " re" in desc.lower()
-                        ):
-                            winre_guids.append(guid)
+                        if dev_type == winreg.REG_BINARY:
+                            decoded = bytes(dev_val).decode(
+                                "utf-16-le", errors="ignore"
+                            ).lower()
+                            if "winre.wim" in decoded:
+                                winre_guids.append(guid)
                     except OSError:
                         pass
 
