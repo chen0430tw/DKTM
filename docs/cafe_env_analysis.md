@@ -225,13 +225,44 @@ RAM 清空，KScsiDisk 重新從服務器掛載乾淨鏡像 → 系統還原
 
 > ⚠️ `{e18e67af-...}` 的 Path 是 `\hiberfil.sys`，是休眠恢復程序，誤用會導致進入休眠恢復流程。
 
-### 6.2 可用 WinPE 環境
+### 6.2 WinRE device 元素結構（ramdisk 設備描述符）
+
+BCD 中 `{300209a8-...}` 的 `[11000001]` 元素是一個 **ramdisk 設備描述符**，並非普通分區設備描述符。其結構要點：
+
+- 總長 200 字節，存儲為 REG_BINARY
+- `[0–15]`：ramdisk options 對象 GUID `{300209a9-...}`（小端序）
+- `[16–135]`：固定頭部，包含分區描述符（MBR 磁盤簽名 `b3 14 64 ff` 在偏移 56 處）
+- `[136（0x88）+]`：WIM 文件路徑，UTF-16LE 空終止（值為 `\Recovery\WindowsRE\Winre.wim`）
+
+這種描述符在學術文獻中常被稱為「靜態/休眠態描述符」——它完整描述了「從哪個分區、哪個 WIM 文件啓動 ramdisk」，但本身並不包含運行狀態，因此**可以整體克隆**用於自建 WinPE 入口。`bcd_add_winpe.py` 的做法是：直接複製該 200 字節，然後在偏移 0x88 處將 `Winre.wim`（9 個 UTF-16LE 字符）原地替換為 `winpe.wim`，長度相等，分區引用（含磁盤簽名）保持不變。
+
+> ⚠️ 注意不要將該 ramdisk 描述符與 `{e18e67af-...}` 混淆——後者類型為 `0x10200004`（Windows Resume），Path 指向 `\hiberfil.sys`，是真正的休眠恢復程序，誤用會觸發休眠恢復流程而非 WinPE 啓動。
+
+### 6.3 DKTM 固定 GUID 的來源
+
+DKTM WinPE 入口使用兩個固定 GUID：
+
+| 角色 | GUID |
+|------|------|
+| OS loader | `{7619dcc9-fafe-11d9-b411-000476eba25f}` |
+| ramdisk options | `{7619dcc8-fafe-11d9-b411-000476eba25f}` |
+
+這兩個 GUID 並非自行設計，而是通過**讀取 ADK copype 生成的參考 BCD 文件**發現的：
+
+```
+D:\DKTM_PE\media\Boot\BCD
+```
+
+ADK copype 在構建 WinPE 工作目錄時會在 `media\Boot\BCD` 放置一份已正確填充的 WinPE BCD，其中的 OS loader 條目即使用上述 GUID。通過 Python 枚舉該 BCD 的所有對象後，確認 `{7619dcc9-...}` 類型為 `0x10200003`（OS loader），`{7619dcc8-...}` 類型為 `0x30000000`（ramdisk options），與系統 BCD 中 WinRE 所用的對象類型完全對應。
+
+固定使用這兩個 GUID 的好處是：`bcd_add_winpe.py` 每次會話執行時可以冪等地用相同 GUID 覆蓋，`_discover_bcd_entries()` 在健康檢查時也可以直接按 GUID 識別 DKTM 入口是否存在。
+
+### 6.4 可用 WinPE 環境
 
 | 環境 | 位置 | BCD 入口 | 狀態 |
 |------|------|---------|------|
-| WinRE | `C:\Recovery\WindowsRE\Winre.wim`（509 MB）| `{300209a8-...}` | ✅ 已在 BCD，可直接用 |
-| 乾淨 WinPE | ADK: `amd64\en-us\winpe.wim`（325 MB）| 待添加 | ⚠️ 需添加 BCD 入口 |
-| copype 工作目錄 | `C:\DKTM_PE\media\sources\boot.wim` | 待添加 | ⚠️ 需添加 BCD 入口 |
+| WinRE | `C:\Recovery\WindowsRE\Winre.wim`（509 MB）| `{300209a8-...}` | ✅ 已在 BCD，可直接用（fallback）|
+| DKTM 乾淨 WinPE | `D:\DKTM_PE\media\sources\boot.wim` | `{7619dcc9-...}` | ✅ 已由 `bcd_add_winpe.py` 寫入（主路徑）|
 
 ---
 
