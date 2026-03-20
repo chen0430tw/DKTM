@@ -70,7 +70,7 @@ echo   Log: %LOG%
 echo ========================================
 echo.
 
-:: ── Step 1: wpeinit ──────────────────────────────────────────────────────────
+:: -- Step 1: wpeinit ----------------------------------------------------------
 echo [STEP 1] Running wpeinit...
 echo [STEP 1] wpeinit >> %LOG%
 wpeinit
@@ -78,7 +78,7 @@ echo [STEP 1] wpeinit exit code: %ERRORLEVEL% >> %LOG%
 echo [1] wpeinit done (exit=%ERRORLEVEL%)
 echo.
 
-:: ── Step 2: Drive enumeration ─────────────────────────────────────────────────
+:: -- Step 2: Drive enumeration ------------------------------------------------
 echo [STEP 2] Enumerating drives...
 echo [STEP 2] Drive enumeration >> %LOG%
 echo --- Drive letters accessible --- >> %LOG%
@@ -91,7 +91,7 @@ for %%D in (A B C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
 )
 echo.
 
-:: ── Step 3: Diskpart list volume ──────────────────────────────────────────────
+:: -- Step 3: Diskpart list volume ---------------------------------------------
 echo [STEP 3] Diskpart volume list...
 echo [STEP 3] diskpart list volume >> %LOG%
 echo list volume > X:\dp_script.txt
@@ -99,7 +99,7 @@ diskpart /s X:\dp_script.txt >> %LOG% 2>&1
 echo [3] diskpart done
 echo.
 
-:: ── Step 4: Find USB by marker ────────────────────────────────────────────────
+:: -- Step 4: Find USB by marker -----------------------------------------------
 echo [STEP 4] Searching for DKTM USB marker...
 echo [STEP 4] Looking for DKTM_USB_MARKER.txt >> %LOG%
 set USB_FOUND=
