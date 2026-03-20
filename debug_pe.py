@@ -157,7 +157,7 @@ echo   Log: E:\DKTM\debug.log
 echo   Press any key to reboot immediately.
 echo ========================================
 echo [STEP 7] Waiting 60s before reboot >> %LOG%
-timeout /t 60
+ping -n 61 127.0.0.1 > nul
 wpeutil reboot
 """
 
