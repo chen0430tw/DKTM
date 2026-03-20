@@ -124,6 +124,11 @@ if exist %USB_FOUND%:\DKTM\write_test.txt (
 ) else (
     echo [4] ERROR: USB is READ-ONLY - log will NOT be saved
 )
+
+:: -- Save partial log to USB NOW (before network disable changes drive letters) --
+echo [4] Saving partial log to USB before network disable...
+copy /y %LOG% %USB_FOUND%:\DKTM\debug.log
+if %ERRORLEVEL% == 0 (echo [4] Partial log saved OK) else (echo [4] Partial log save FAILED err=%ERRORLEVEL%)
 echo.
 
 :: -- Step 5: Disable network --
@@ -198,26 +203,37 @@ ipconfig >> %LOG% 2>&1
 echo --- environment --- >> %LOG%
 set >> %LOG% 2>&1
 
+:: -- Re-scan USB (drive letter may change after network disable) --
+echo [8] Re-scanning for USB drive letter...
+set USB_FOUND2=
+for %%D in (A B C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
+    if exist %%D:\DKTM\DKTM_USB_MARKER.txt (
+        set USB_FOUND2=%%D
+        echo [8] USB re-scan: found at %%D: (was %USB_FOUND%:)
+        goto :usb_rescan_done
+    )
+)
+echo [8] USB re-scan: NOT FOUND (keeping old: %USB_FOUND%:)
+set USB_FOUND2=%USB_FOUND%
+:usb_rescan_done
+
 :: -- Step 8: Append to sentinel --
-if not "%USB_FOUND%"=="" (
-    echo WINPE_RAN %DATE% %TIME% >> %USB_FOUND%:\DKTM\boot_sentinel.txt
-    echo [8] Sentinel updated on %USB_FOUND%:
+if not "%USB_FOUND2%"=="" (
+    echo WINPE_RAN %DATE% %TIME% >> %USB_FOUND2%:\DKTM\boot_sentinel.txt
+    if %ERRORLEVEL% == 0 (echo [8] Sentinel updated on %USB_FOUND2%:) else (echo [8] Sentinel write FAILED err=%ERRORLEVEL%)
 )
 
 :: -- Step 9: Copy log to USB --
-echo [STEP 9] Copying log to USB (%USB_FOUND%:\DKTM\debug.log)...
-echo [9] USB=[%USB_FOUND%] LOG=[%LOG%]
+echo [STEP 9] Copying log to USB (%USB_FOUND2%:\DKTM\debug.log)...
+echo [9] USB=[%USB_FOUND2%] LOG=[%LOG%]
 if exist %LOG% (echo [9] log file OK) else (echo [9] log file MISSING)
-if exist %USB_FOUND%:\DKTM\ (echo [9] DKTM dir OK) else (echo [9] DKTM dir MISSING - mkdir && mkdir %USB_FOUND%:\DKTM\)
+if exist %USB_FOUND2%:\DKTM\ (echo [9] DKTM dir OK) else (echo [9] DKTM dir MISSING)
 echo [STEP 9] Copying log to USB >> %LOG%
-copy /y %LOG% %USB_FOUND%:\DKTM\debug.log
+copy /y %LOG% %USB_FOUND2%:\DKTM\debug.log
 if %ERRORLEVEL% == 0 (
-    echo [9] Log saved to %USB_FOUND%:\DKTM\debug.log
+    echo [9] Log saved to %USB_FOUND2%:\DKTM\debug.log
 ) else (
     echo [9] ERROR: log copy failed (err=%ERRORLEVEL%)
-    echo [9] Trying type redirect...
-    type %LOG% > %USB_FOUND%:\DKTM\debug.log
-    if %ERRORLEVEL% == 0 (echo [9] type OK) else (echo [9] type also failed)
 )
 
 :skip_usb_copy
@@ -227,11 +243,11 @@ echo.
 echo ========================================
 echo   Network: DISABLED
 echo   Test file: %TESTFILE%
-echo   Log: %USB_FOUND%:\DKTM\debug.log
+echo   Log: %USB_FOUND2%:\DKTM\debug.log
 echo   Rebooting in 60s...
 echo ========================================
 echo [STEP 10] Waiting 60s >> %LOG%
-copy /y %LOG% %USB_FOUND%:\DKTM\debug.log
+copy /y %LOG% %USB_FOUND2%:\DKTM\debug.log
 ping -n 61 127.0.0.1 > nul
 wpeutil reboot
 """
