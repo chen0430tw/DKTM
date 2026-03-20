@@ -59,51 +59,32 @@ exit
         print(r.stderr)
         raise RuntimeError(f"diskpart 失败 exit={r.returncode}")
 
-    # 用 PowerShell 按卷标找到新卷，赋盘符 V:
+    # 系统 automount 被禁用，无法赋盘符。改用卷 GUID 路径直接访问。
     time.sleep(2)
-    print("[*] 用 PowerShell 赋盘符 V:...")
-    ps = (
-        "$v = Get-Volume | Where-Object { $_.FileSystemLabel -eq 'DKTM_PE' }; "
-        "if (-not $v) { exit 1 }; "
-        "$p = Get-Partition -DiskNumber "
-        "  (Get-Disk | Where-Object { $_.Location -like '*usb.vhd*' }).Number "
-        "  | Where-Object { $_.PartitionNumber -eq 1 }; "
-        "if ($p) { Set-Partition -DiskNumber $p.DiskNumber "
-        "  -PartitionNumber $p.PartitionNumber -NewDriveLetter V } "
-        "else { Add-PartitionAccessPath -AccessPath 'V:\\' "
-        "  -DiskNumber $v.DriveLetter } "
-    )
-    # 更简单：直接找卷标 DKTM_PE 对应的分区，设盘符
-    ps2 = (
-        "$disk = Get-Disk | Where-Object { $_.Location -like '*DKTM_temp_qemu*' }; "
-        "if (-not $disk) { Write-Host 'disk not found'; exit 1 }; "
-        "$part = Get-Partition -DiskNumber $disk.Number | "
-        "  Where-Object { $_.Type -eq 'Basic' -or $_.Type -eq 'IFS' } | "
-        "  Select-Object -First 1; "
-        "if (-not $part) { Write-Host 'partition not found'; exit 1 }; "
-        "Set-Partition -DiskNumber $disk.Number "
-        "  -PartitionNumber $part.PartitionNumber -NewDriveLetter V; "
-        "Write-Host 'done'"
-    )
+    print("[*] 获取卷 GUID 路径...")
     r2 = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", ps2],
+        ["powershell", "-NoProfile", "-Command",
+         "Get-Volume | Where-Object { $_.FileSystemLabel -eq 'DKTM_PE' } "
+         "| Select-Object -ExpandProperty Path"],
         capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
-    print("    ps:", (r2.stdout + r2.stderr).strip())
+    vol_path = r2.stdout.strip()
+    if not vol_path:
+        raise RuntimeError("找不到 DKTM_PE 卷，diskpart 格式化可能失败")
+    print(f"    ✓ 卷路径: {vol_path}")
+    return vol_path   # 返回给调用方使用
 
-    time.sleep(2)
-    if not Path("V:\\").exists():
-        raise RuntimeError("V: 盘没有出现，PowerShell 赋盘符失败")
-    print("    ✓ VHD 已挂载为 V:")
 
-
-def copy_winpe():
-    """复制 WinPE 文件到 V:。"""
-    print("[*] 复制 WinPE 文件到 V:\\...")
+def copy_winpe(vol_path: str = None):
+    """复制 WinPE 文件到 VHD（via 卷 GUID 路径，无需盘符）。"""
+    if vol_path is None:
+        vol_path = "V:\\"
+    print(f"[*] 复制 WinPE 文件到 {vol_path}...")
+    root = Path(vol_path)
     targets = ["EFI", "Boot", "sources", "bootmgr", "bootmgr.efi"]
     for t in targets:
         src = PE_MEDIA / t
-        dst = Path("V:\\") / t
+        dst = root / t
         if not src.exists():
             print(f"    跳过（不存在）: {src}")
             continue
@@ -116,12 +97,10 @@ def copy_winpe():
         print(f"    ✓ {t}")
 
     # 验证关键文件
-    for f in [r"V:\EFI\Boot\bootx64.efi",
-              r"V:\EFI\Microsoft\Boot\BCD",
-              r"V:\sources\boot.wim",
-              r"V:\Boot\boot.sdi"]:
-        exists = Path(f).exists()
-        print(f"    {'✓' if exists else '✗'} {f}")
+    for f in ["EFI/Boot/bootx64.efi", "EFI/Microsoft/Boot/BCD",
+              "sources/boot.wim", "Boot/boot.sdi"]:
+        p = root / f
+        print(f"    {'✓' if p.exists() else '✗'} {p}")
 
 
 def detach_vhd():
@@ -201,8 +180,8 @@ def main():
         sys.exit(1)
 
     if not run_only:
-        create_vhd()
-        copy_winpe()
+        vol_path = create_vhd()
+        copy_winpe(vol_path)
         detach_vhd()
         print("\n[✓] VHD 已创建:", VHD_PATH)
 
