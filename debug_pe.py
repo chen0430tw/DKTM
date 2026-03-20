@@ -276,6 +276,16 @@ def build_debug_pe() -> Path:
     if not builder.detect_adk():
         raise RuntimeError("ADK 未找到")
 
+    # 构建前强制清理残留的 DISM 挂载，避免 boot.wim 被锁
+    log.info("[*] 清理残留 DISM 挂载...")
+    subprocess.run(["dism", "/Cleanup-Wim"], capture_output=True)
+    mount_dir = out / "mount"
+    if mount_dir.exists():
+        subprocess.run(
+            ["dism", "/Unmount-Image", f"/MountDir:{mount_dir}", "/Discard"],
+            capture_output=True
+        )
+
     log.info("[*] 运行 copype...")
     if not builder.run_copype():
         raise RuntimeError("copype 失败")
@@ -371,9 +381,16 @@ def read_debug_log() -> None:
         val = struct.unpack("<H", bn)[0]
         bn_status = f"✗ 未消耗，仍为 {val:#06x} — 固件可能未处理 BootNext"
 
-    # ── 2. 读 sentinel ────────────────────────────────────────────────────────
-    sentinel_path = Path(USB_SENTINEL)
-    log_path      = Path(USB_LOG_FILE)
+    # ── 2. 找 USB（扫所有盘找 DKTM_USB_MARKER.txt）────────────────────────────
+    usb_drive = USB_DRIVE  # 默认 E:
+    for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+        if Path(f"{letter}:\\DKTM\\DKTM_USB_MARKER.txt").exists():
+            usb_drive = f"{letter}:"
+            break
+
+    sentinel_path = Path(usb_drive) / "DKTM" / "boot_sentinel.txt"
+    log_path      = Path(usb_drive) / "DKTM" / "debug.log"
+    print(f"[USB] 找到 USB: {usb_drive}  (sentinel={sentinel_path})")
 
     print(f"\n{'='*60}")
     print("  DKTM Boot Diagnostic")
