@@ -153,7 +153,7 @@ if %ERRORLEVEL% == 0 (
 echo.
 echo ========================================
 echo   Debug complete. Rebooting in 60s...
-echo   Log: E:\DKTM\debug.log
+echo   Log: %USB_FOUND%:\DKTM\debug.log
 echo   Press any key to reboot immediately.
 echo ========================================
 echo [STEP 7] Waiting 60s before reboot >> %LOG%
