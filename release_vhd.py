@@ -7,7 +7,7 @@ from pathlib import Path
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VHD_PATH = r"C:\DKTM_temp_qemu\usb.vhd"
+VHD_PATH = r"C:\DKTM_temp_qemu\usb2.vhd"
 
 
 def run_diskpart(commands: str) -> str:

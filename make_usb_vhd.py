@@ -17,7 +17,7 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 WORK_DIR   = Path(r"C:\DKTM_temp_qemu")
-VHD_PATH   = WORK_DIR / "usb.vhd"
+VHD_PATH   = WORK_DIR / "usb2.vhd"
 VHD_SIZE   = 600   # MB
 PE_MEDIA   = Path(r"C:\DKTM_temp_dbg\media")
 QEMU_EXE   = r"C:\Program Files\qemu\qemu-system-x86_64.exe"
@@ -55,9 +55,9 @@ exit
     r = run(["diskpart", "/s", str(script_path)],
             capture_output=True, text=True, encoding="utf-8", errors="replace")
     print(r.stdout[-1000:] if r.stdout else "")
-    if "DKTM_PE" not in r.stdout:
+    if r.returncode != 0:
         print(r.stderr)
-        raise RuntimeError("diskpart 格式化失败，未见 DKTM_PE 卷标")
+        raise RuntimeError(f"diskpart 失败 exit={r.returncode}")
 
     # 用 PowerShell 按卷标找到新卷，赋盘符 V:
     time.sleep(2)
