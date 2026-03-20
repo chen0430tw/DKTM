@@ -118,7 +118,7 @@ goto :skip_usb_copy
 :usb_found
 echo.
 
-:: ── Step 5: 禁用所有网卡 ──────────────────────────────────────────────────────
+:: -- Step 5: Disable network --
 echo [STEP 5] Disabling all network adapters...
 echo [STEP 5] Disabling network >> %LOG%
 echo --- netsh interfaces before --- >> %LOG%
@@ -132,7 +132,7 @@ echo [5] Network disabled >> %LOG%
 echo [5] Network adapters disabled
 echo.
 
-:: ── Step 6: 挂载 Windows 主分区 ────────────────────────────────────────────────
+:: -- Step 6: Mount Windows partition --
 echo [STEP 6] Mounting Windows main partition...
 echo [STEP 6] Mounting Windows partition >> %LOG%
 echo --- list disk --- >> %LOG%
@@ -142,7 +142,7 @@ echo --- list volume (full) --- >> %LOG%
 (echo list volume) > X:\dp3.txt
 diskpart /s X:\dp3.txt >> %LOG% 2>&1
 
-:: 尝试给最大的 NTFS 分区分配盘符 W:
+:: Try to assign letter W: to volume 1
 echo select volume 1 > X:\dp_mount.txt
 echo assign letter=W >> X:\dp_mount.txt
 echo exit >> X:\dp_mount.txt
@@ -166,7 +166,7 @@ goto :win_skip
 echo --- Windows drive root --- >> %LOG%
 dir %WIN_DRIVE%:\ /b /a >> %LOG% 2>&1
 
-:: 写入测试文件，看重启后是否被还原
+:: Write test file to check if restore system reverts it
 set TESTFILE=%WIN_DRIVE%:\DKTM_restore_test.txt
 echo DKTM_TEST %DATE% %TIME% > %TESTFILE% 2>nul
 if exist %TESTFILE% (
@@ -180,7 +180,7 @@ if exist %TESTFILE% (
 :win_skip
 echo.
 
-:: ── Step 7: System info ────────────────────────────────────────────────────────
+:: -- Step 7: System info --
 echo [STEP 7] Collecting system info...
 echo [STEP 7] System info >> %LOG%
 echo --- ipconfig --- >> %LOG%
@@ -188,13 +188,13 @@ ipconfig >> %LOG% 2>&1
 echo --- environment --- >> %LOG%
 set >> %LOG% 2>&1
 
-:: ── Step 8: Append to sentinel ────────────────────────────────────────────────
+:: -- Step 8: Append to sentinel --
 if not "%USB_FOUND%"=="" (
     echo WINPE_RAN %DATE% %TIME% >> %USB_FOUND%:\DKTM\boot_sentinel.txt
     echo [8] Sentinel updated on %USB_FOUND%:
 )
 
-:: ── Step 9: Copy log to USB ────────────────────────────────────────────────────
+:: -- Step 9: Copy log to USB --
 echo [STEP 9] Copying log to USB (%USB_FOUND%:\DKTM\debug.log)...
 echo [STEP 9] Copying log to USB >> %LOG%
 if not exist %USB_FOUND%:\DKTM\ mkdir %USB_FOUND%:\DKTM\
@@ -207,7 +207,7 @@ if %ERRORLEVEL% == 0 (
 
 :skip_usb_copy
 
-:: ── Step 10: Pause then reboot ────────────────────────────────────────────────
+:: -- Step 10: Pause then reboot --
 echo.
 echo ========================================
 echo   Network: DISABLED
