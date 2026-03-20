@@ -1,6 +1,6 @@
 # 網咖環境調研報告
 
-> 調研日期：2026-03-18（磁盤保護機制補充：2026-03-19）
+> 調研日期：2026-03-18（磁盤保護機制補充：2026-03-19；WinPE 實測補充：2026-03-20）
 > 機器 IP：192.168.10.39
 > 系統：Windows 10 Enterprise 2016 LTSB (10.0.19045)
 > 運行身份：Administrator（High Mandatory Level）
@@ -287,14 +287,46 @@ ADK copype 在構建 WinPE 工作目錄時會在 `media\Boot\BCD` 放置一份�
 14. WinPE 完成後重啓 → 返回 Windows
 ```
 
-### 7.2 環境兼容性
+### 7.2 實測記錄（2026-03-20）
+
+#### 測試一：BootNext 熱重啓完整流程驗證 ✅
+
+- BootNext=0x0005（Kingston USB Boot0005）成功被固件讀取並消耗（err=203）
+- WinPE startnet.cmd 完整執行：wpeinit(0) → 枚舉盤符 → diskpart → 找到 USB marker → Sentinel 寫入 → 日誌保存
+- WinPE 內磁盤狀況：
+  - `C:` = Kingston USB（NTFS, 115 GB, Removable）
+  - `X:` = WinPE 內存盤
+  - **Windows 系統盤完全不可見**（diskpart 僅顯示 DVD-ROM + Kingston USB）
+- CPU：Intel64 Family 6 Model 158（Coffee Lake），12 核 — 真機確認
+
+#### 測試二：斷網重啓（2026-03-20）
+
+WinPE 在重啓前禁用所有網卡，觀察保護系統行為：
+
+| 觀察項 | 結果 |
+|--------|------|
+| USB 盤符 | 正常時 `E:`，斷網後變為 `D:`（D: 平時為網絡映射盤，斷網後 USB 頂位） |
+| 先導程序（lwclient/ScStart）啓動 | **未啓動** — 確認依賴網絡連線 |
+| 系統是否仍被還原 | **是** — 證明還原並非純網絡觸發 |
+| 測試文件（`DKTM_restore_test.txt`）是否寫入 C: | **否** — WinPE 無法訪問/寫入 Windows 系統盤 |
+
+**關鍵結論**：
+
+1. **KScsiDisk 在 WinPE 階段完全隱藏了系統盤**。WinPE 的 diskpart 看不到任何 NTFS 系統分區，`ntoskrnl.exe` 路徑掃描也找不到 Windows 安裝。這意味著系統盤不是普通的本地物理盤，而是 KScsiDisk 從服務器掛載的虛擬 SCSI 設備，在 KScsiDisk 驅動未加載的 WinPE 環境中完全不存在。
+
+2. **還原機制是本地 RAM 清空**，不依賴網絡。重啓時 RAM 緩衝區清空，KScsiDisk 重新從 `192.168.2.251:11560` 掛載乾淨鏡像。斷網只影響 lwclient 管理通道，不影響 KScsiDisk 的鏡像重載（兩者連接不同服務器）。
+
+3. **WinPE 對系統盤的修改不可行**。即使 WinPE 成功啓動，也無法直接修改 Windows 系統盤的文件（因為系統盤在 WinPE 中根本不存在）。DKTM 的影響點只能是 BCD（已在重啓前的 Windows 環境中修改）或 RAM 中的運行時內核狀態。
+
+### 7.3 環境兼容性
 
 | 風險項 | 評估 | 對策 |
 |--------|------|------|
 | bcdedit 被 ACL 封鎖 | ✅ 已通過直接文件操作繞過 | `RegCreateKeyExW(REG_OPTION_BACKUP_RESTORE)` |
 | kdisk RAM 寫緩衝覆蓋 BCD 修改 | ✅ BCD 在 `C:\Boot\`，受 kdisk 保護，但 DKTM 在重啓前寫入有效，Boot Manager 讀取後即清除 bootsequence | — |
-| 熱重啓後 kdisk 緩衝區行為 | ⚠️ 待確認：WinPE 期間 kdisk 未加載，重回 Windows 後緩衝區是否延續取決於 KScsiDisk 握手協議 | 建議實測觀察重啓後 RAM 使用率 |
-| lwdeploy 服務器推送重鏡像 | ⚠️ 無法預測，屬外部因素 | BCD 寫入後盡快重啓，縮短暴露窗口 |
+| WinPE 無法訪問系統盤 | ✅ 已確認（KScsiDisk 未加載時系統盤不存在）— DKTM 不需要在 WinPE 中修改系統盤文件 | — |
+| 熱重啓後 kdisk 緩衝區行為 | ⚠️ 已確認還原發生：RAM 清空後 KScsiDisk 重新掛載乾淨鏡像。WinPE 期間的任何 RAM 修改在返回 Windows 後即失效 | DKTM 的修改必須在 Windows 環境內完成，不能依賴 WinPE 寫盤 |
+| lwdeploy 服務器推送重鏡像 | ⚠️ 斷網時 lwclient 不啓動，但服務器鏡像重載仍正常進行 | BCD 寫入後盡快重啓，縮短暴露窗口 |
 | lwclient 實時連線服務器 | ⚠️ 管理員可能實時看到操作 | 不建議在網咖環境用 real-run |
 | SeRestorePrivilege 默認啓用 | ✅ BCD 寫入無需額外提權 | — |
 | SeSystemEnvironmentPrivilege 禁用 | ✅ UEFI 變量路徑不可用，但 BCD 文件路徑可用 | — |
@@ -319,3 +351,8 @@ ADK copype 在構建 WinPE 工作目錄時會在 `media\Boot\BCD` 放置一份�
 - [x] 在 `boot.wim` 中加入 `startnet.cmd`：`wpeinit` → `wpeutil reboot`，WinPE 啓動後自動重啓返回 Windows
 - [x] 更新 `config.yaml`：乾淨 WinPE 為主，WinRE（`{300209a8-...}`）為 fallback
 - [x] 優化熱重啓流程：health_check 前移到第一步，去除冗餘 flush_io 調用，重啓倒數支持 Ctrl+C 中斷並自動回滾
+- [x] BootNext 熱重啓真機驗證通過（2026-03-20）：Kingston USB Boot0005 → WinPE startnet.cmd 完整執行 → 返回 Windows
+- [x] QEMU USB VHD 測試環境搭建完成（`make_usb_vhd.py`）：VHD via GUID 路徑繞過 automount 禁用問題
+- [ ] **新問題**：WinPE 中 KScsiDisk 未加載，系統盤不可見 → DKTM 的核心操作（kernel 修改）必須在 Windows 環境內完成，無法借助 WinPE 寫盤
+- [ ] 確認 KScsiDisk 掛載協議（`:11560`）是否可在 WinPE 中手動加載驅動來獲得系統盤訪問
+- [ ] 評估替代方案：在 Windows 環境中直接進行 kernel patch（不依賴 WinPE 寫盤）
