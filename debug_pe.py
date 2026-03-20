@@ -116,6 +116,14 @@ echo [4] WARNING: USB marker not found - log may not be saved
 goto :skip_usb_copy
 
 :usb_found
+echo [4] Testing USB write access...
+echo WRITE_TEST > %USB_FOUND%:\DKTM\write_test.txt
+if exist %USB_FOUND%:\DKTM\write_test.txt (
+    echo [4] USB write OK
+    del %USB_FOUND%:\DKTM\write_test.txt > nul 2>&1
+) else (
+    echo [4] ERROR: USB is READ-ONLY - log will NOT be saved
+)
 echo.
 
 :: -- Step 5: Disable network --
@@ -392,7 +400,7 @@ def read_debug_log() -> None:
     usb_drive = USB_DRIVE  # 默认 E:
     for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
         if Path(f"{letter}:\\DKTM\\DKTM_USB_MARKER.txt").exists():
-            usb_drive = f"{letter}:"
+            usb_drive = f"{letter}:\\"
             break
 
     sentinel_path = Path(usb_drive) / "DKTM" / "boot_sentinel.txt"
@@ -408,7 +416,7 @@ def read_debug_log() -> None:
         print("[SENTINEL] ✗ 预写标记不存在 — 脚本没有成功写入 E: ?")
     else:
         sentinel = sentinel_path.read_text(encoding="utf-8", errors="replace")
-        has_winpe = "WINPE_RAN" in sentinel
+        has_winpe = any(ln.startswith("WINPE_RAN") for ln in sentinel.splitlines())
         print("[SENTINEL] 内容:")
         for line in sentinel.strip().splitlines():
             print(f"    {line}")
