@@ -123,10 +123,12 @@ echo [STEP 5] Disabling all network adapters...
 echo [STEP 5] Disabling network >> %LOG%
 echo --- netsh interfaces before --- >> %LOG%
 netsh interface show interface >> %LOG% 2>&1
-for /f "tokens=4*" %%A in ('netsh interface show interface ^| findstr /i "connected"') do (
-    echo   Disabling: %%A %%B >> %LOG%
-    netsh interface set interface "%%A %%B" disabled >> %LOG% 2>&1
-    netsh interface set interface "%%A" disabled >> %LOG% 2>&1
+for /f "tokens=1,2,3,4*" %%P in ('netsh interface show interface') do (
+    if /i "%%Q"=="Connected" (
+        echo   Disabling: [%%S %%T] >> %LOG%
+        netsh interface set interface "%%S %%T" disabled >> %LOG% 2>&1
+        netsh interface set interface "%%S" disabled >> %LOG% 2>&1
+    )
 )
 echo [5] Network disabled >> %LOG%
 echo [5] Network adapters disabled
@@ -196,13 +198,18 @@ if not "%USB_FOUND%"=="" (
 
 :: -- Step 9: Copy log to USB --
 echo [STEP 9] Copying log to USB (%USB_FOUND%:\DKTM\debug.log)...
+echo [9] USB=[%USB_FOUND%] LOG=[%LOG%]
+if exist %LOG% (echo [9] log file OK) else (echo [9] log file MISSING)
+if exist %USB_FOUND%:\DKTM\ (echo [9] DKTM dir OK) else (echo [9] DKTM dir MISSING - mkdir && mkdir %USB_FOUND%:\DKTM\)
 echo [STEP 9] Copying log to USB >> %LOG%
-if not exist %USB_FOUND%:\DKTM\ mkdir %USB_FOUND%:\DKTM\
-copy /y %LOG% %USB_FOUND%:\DKTM\debug.log > nul 2>&1
+copy /y %LOG% %USB_FOUND%:\DKTM\debug.log
 if %ERRORLEVEL% == 0 (
     echo [9] Log saved to %USB_FOUND%:\DKTM\debug.log
 ) else (
     echo [9] ERROR: log copy failed (err=%ERRORLEVEL%)
+    echo [9] Trying type redirect...
+    type %LOG% > %USB_FOUND%:\DKTM\debug.log
+    if %ERRORLEVEL% == 0 (echo [9] type OK) else (echo [9] type also failed)
 )
 
 :skip_usb_copy
@@ -216,7 +223,7 @@ echo   Log: %USB_FOUND%:\DKTM\debug.log
 echo   Rebooting in 60s...
 echo ========================================
 echo [STEP 10] Waiting 60s >> %LOG%
-copy /y %LOG% %USB_FOUND%:\DKTM\debug.log > nul 2>&1
+copy /y %LOG% %USB_FOUND%:\DKTM\debug.log
 ping -n 61 127.0.0.1 > nul
 wpeutil reboot
 """
@@ -297,7 +304,7 @@ def build_debug_pe() -> Path:
 
     log.info("[*] 写入 debug startnet.cmd...")
     startnet = out / "mount" / "Windows" / "System32" / "startnet.cmd"
-    startnet.write_text(DEBUG_STARTNET, encoding="mbcs")
+    startnet.write_text(DEBUG_STARTNET, encoding="ascii")
     log.info("    ✓ debug startnet.cmd 已写入")
 
     log.info("[*] 卸载 boot.wim (commit)...")
