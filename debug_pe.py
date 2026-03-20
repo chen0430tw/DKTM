@@ -118,45 +118,105 @@ goto :skip_usb_copy
 :usb_found
 echo.
 
-:: ── Step 5: System info ───────────────────────────────────────────────────────
-echo [STEP 5] Collecting system info...
-echo [STEP 5] System info >> %LOG%
-echo --- BIOS/UEFI mode (bcdedit) --- >> %LOG%
-bcdedit >> %LOG% 2>&1
-echo --- IP config --- >> %LOG%
-ipconfig >> %LOG% 2>&1
-echo --- Environment --- >> %LOG%
-set >> %LOG% 2>&1
+:: ── Step 5: 禁用所有网卡 ──────────────────────────────────────────────────────
+echo [STEP 5] Disabling all network adapters...
+echo [STEP 5] Disabling network >> %LOG%
+echo --- netsh interfaces before --- >> %LOG%
+netsh interface show interface >> %LOG% 2>&1
+for /f "tokens=4*" %%A in ('netsh interface show interface ^| findstr /i "connected"') do (
+    echo   Disabling: %%A %%B >> %LOG%
+    netsh interface set interface "%%A %%B" disabled >> %LOG% 2>&1
+    netsh interface set interface "%%A" disabled >> %LOG% 2>&1
+)
+echo [5] Network disabled >> %LOG%
+echo [5] Network adapters disabled
+echo.
 
-:: ── Step 5.5: Append to sentinel ────────────────────────────────────────────────
-if not "%USB_FOUND%"=="" (
-    echo WINPE_RAN %DATE% %TIME% >> %USB_FOUND%:\DKTM\boot_sentinel.txt
-    echo [5.5] Sentinel updated on %USB_FOUND%:
+:: ── Step 6: 挂载 Windows 主分区 ────────────────────────────────────────────────
+echo [STEP 6] Mounting Windows main partition...
+echo [STEP 6] Mounting Windows partition >> %LOG%
+echo --- list disk --- >> %LOG%
+(echo list disk) > X:\dp2.txt
+diskpart /s X:\dp2.txt >> %LOG% 2>&1
+echo --- list volume (full) --- >> %LOG%
+(echo list volume) > X:\dp3.txt
+diskpart /s X:\dp3.txt >> %LOG% 2>&1
+
+:: 尝试给最大的 NTFS 分区分配盘符 W:
+echo select volume 1 > X:\dp_mount.txt
+echo assign letter=W >> X:\dp_mount.txt
+echo exit >> X:\dp_mount.txt
+diskpart /s X:\dp_mount.txt >> %LOG% 2>&1
+ping -n 3 127.0.0.1 > nul
+
+set WIN_DRIVE=
+for %%D in (W C D E F G H I J K L M N O P Q R S T U V) do (
+    if exist %%D:\Windows\System32\ntoskrnl.exe (
+        set WIN_DRIVE=%%D
+        echo [6] Windows found at %%D: >> %LOG%
+        echo [6] Windows drive: %%D:
+        goto :win_found
+    )
+)
+echo [6] Windows partition NOT found >> %LOG%
+echo [6] WARNING: Windows partition not found
+goto :win_skip
+
+:win_found
+echo --- Windows drive root --- >> %LOG%
+dir %WIN_DRIVE%:\ /b /a >> %LOG% 2>&1
+
+:: 写入测试文件，看重启后是否被还原
+set TESTFILE=%WIN_DRIVE%:\DKTM_restore_test.txt
+echo DKTM_TEST %DATE% %TIME% > %TESTFILE% 2>nul
+if exist %TESTFILE% (
+    echo [6] Test file written: %TESTFILE% >> %LOG%
+    echo [6] Test file written to Windows drive OK
+) else (
+    echo [6] Test file FAILED (write protected?) >> %LOG%
+    echo [6] WARNING: Cannot write to Windows drive
 )
 
-:: ── Step 6: Copy log to USB ───────────────────────────────────────────────────
-echo [STEP 6] Copying log to USB (%USB_FOUND%:\DKTM\debug.log)...
-echo [STEP 6] Copying log to USB >> %LOG%
+:win_skip
+echo.
+
+:: ── Step 7: System info ────────────────────────────────────────────────────────
+echo [STEP 7] Collecting system info...
+echo [STEP 7] System info >> %LOG%
+echo --- ipconfig --- >> %LOG%
+ipconfig >> %LOG% 2>&1
+echo --- environment --- >> %LOG%
+set >> %LOG% 2>&1
+
+:: ── Step 8: Append to sentinel ────────────────────────────────────────────────
+if not "%USB_FOUND%"=="" (
+    echo WINPE_RAN %DATE% %TIME% >> %USB_FOUND%:\DKTM\boot_sentinel.txt
+    echo [8] Sentinel updated on %USB_FOUND%:
+)
+
+:: ── Step 9: Copy log to USB ────────────────────────────────────────────────────
+echo [STEP 9] Copying log to USB (%USB_FOUND%:\DKTM\debug.log)...
+echo [STEP 9] Copying log to USB >> %LOG%
 if not exist %USB_FOUND%:\DKTM\ mkdir %USB_FOUND%:\DKTM\
 copy /y %LOG% %USB_FOUND%:\DKTM\debug.log > nul 2>&1
 if %ERRORLEVEL% == 0 (
-    echo [6] Log saved to %USB_FOUND%:\DKTM\debug.log
-    echo [STEP 6] Log copy SUCCESS >> %LOG%
+    echo [9] Log saved to %USB_FOUND%:\DKTM\debug.log
 ) else (
-    echo [6] ERROR: Failed to copy log to USB (err=%ERRORLEVEL%)
-    echo [STEP 6] Log copy FAILED err=%ERRORLEVEL% >> %LOG%
+    echo [9] ERROR: log copy failed (err=%ERRORLEVEL%)
 )
 
 :skip_usb_copy
 
-:: ── Step 7: Pause ─────────────────────────────────────────────────────────────
+:: ── Step 10: Pause then reboot ────────────────────────────────────────────────
 echo.
 echo ========================================
-echo   Debug complete. Rebooting in 60s...
+echo   Network: DISABLED
+echo   Test file: %TESTFILE%
 echo   Log: %USB_FOUND%:\DKTM\debug.log
-echo   Press any key to reboot immediately.
+echo   Rebooting in 60s...
 echo ========================================
-echo [STEP 7] Waiting 60s before reboot >> %LOG%
+echo [STEP 10] Waiting 60s >> %LOG%
+copy /y %LOG% %USB_FOUND%:\DKTM\debug.log > nul 2>&1
 ping -n 61 127.0.0.1 > nul
 wpeutil reboot
 """
