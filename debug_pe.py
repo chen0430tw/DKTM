@@ -34,6 +34,7 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 USB_DRIVE        = "E:"
 USB_MARKER_FILE  = r"E:\DKTM\DKTM_USB_MARKER.txt"
 USB_LOG_FILE     = r"E:\DKTM\debug.log"
+USB_SENTINEL     = r"E:\DKTM\boot_sentinel.txt"   # 预写标记，WinPE 追加状态
 USB_EFI_PATH     = r"E:\EFI\Boot\bootx64.efi"
 TEMP_BUILD_DIR   = r"C:\DKTM_temp_dbg"
 
@@ -126,6 +127,12 @@ echo --- IP config --- >> %LOG%
 ipconfig >> %LOG% 2>&1
 echo --- Environment --- >> %LOG%
 set >> %LOG% 2>&1
+
+:: ── Step 5.5: Append to sentinel ────────────────────────────────────────────────
+if not "%USB_FOUND%"=="" (
+    echo WINPE_RAN %DATE% %TIME% >> %USB_FOUND%:\DKTM\boot_sentinel.txt
+    echo [5.5] Sentinel updated on %USB_FOUND%:
+)
 
 :: ── Step 6: Copy log to USB ───────────────────────────────────────────────────
 echo [STEP 6] Copying log to USB (%USB_FOUND%:\DKTM\debug.log)...
@@ -252,6 +259,13 @@ def deploy_to_usb(media: Path) -> None:
     marker_path.write_text("DKTM USB Marker - do not delete\n", encoding="utf-8")
     log.info(f"    ✓ 标记文件: {USB_MARKER_FILE}")
 
+    # 清空上次的 debug 日志和 sentinel，避免读到旧数据
+    for f in [USB_LOG_FILE, USB_SENTINEL]:
+        p = Path(f)
+        if p.exists():
+            p.unlink()
+    log.info(f"    ✓ 旧日志已清除")
+
 
 def set_bootnext() -> None:
     """设置 BootNext = 0x0005。"""
@@ -270,18 +284,72 @@ def set_bootnext() -> None:
         ok = "✓" if val == BOOT_ENTRY_NUM else "✗"
         log.info(f"    验证: BootNext = {val:#06x} {ok}")
 
+    # 写预写标记到 USB（包含时间戳 + BootNext 值）
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sentinel = Path(USB_SENTINEL)
+    sentinel.parent.mkdir(exist_ok=True)
+    sentinel.write_text(
+        f"PRE_REBOOT {ts}\n"
+        f"BootNext_set = Boot{BOOT_ENTRY_NUM:04X}\n"
+        f"Expecting: WINPE_RAN line below if WinPE executes\n",
+        encoding="utf-8"
+    )
+    log.info(f"    ✓ 预写标记: {USB_SENTINEL}")
+
 
 def read_debug_log() -> None:
-    """读取上次 WinPE 保存的 debug 日志。"""
-    log_path = Path(USB_LOG_FILE)
-    if not log_path.exists():
-        print(f"[!] 日志不存在: {log_path}")
-        print("    可能原因：WinPE 没有运行，或找不到 USB 驱动器盘符")
-        return
+    """读取上次启动的 sentinel + debug 日志，诊断启动阶段。"""
+    import datetime
+
+    # ── 1. 检查 BootNext 是否已消耗 ──────────────────────────────────────────
+    _enable_privilege("SeSystemEnvironmentPrivilege")
+    bn = _read_efi("BootNext")
+    if bn is None:
+        bn_status = f"✓ 已消耗 (err=203) — 固件读取了 BootNext"
+    else:
+        val = struct.unpack("<H", bn)[0]
+        bn_status = f"✗ 未消耗，仍为 {val:#06x} — 固件可能未处理 BootNext"
+
+    # ── 2. 读 sentinel ────────────────────────────────────────────────────────
+    sentinel_path = Path(USB_SENTINEL)
+    log_path      = Path(USB_LOG_FILE)
+
     print(f"\n{'='*60}")
-    print(f"  DKTM Debug Log: {log_path}")
+    print("  DKTM Boot Diagnostic")
+    print(f"{'='*60}")
+    print(f"\n[EFI] BootNext: {bn_status}\n")
+
+    if not sentinel_path.exists():
+        print("[SENTINEL] ✗ 预写标记不存在 — 脚本没有成功写入 E: ?")
+    else:
+        sentinel = sentinel_path.read_text(encoding="utf-8", errors="replace")
+        has_winpe = "WINPE_RAN" in sentinel
+        print("[SENTINEL] 内容:")
+        for line in sentinel.strip().splitlines():
+            print(f"    {line}")
+        print()
+        if has_winpe:
+            print("[SENTINEL] ✓ WINPE_RAN 存在 → WinPE startnet.cmd 成功执行")
+        else:
+            print("[SENTINEL] ✗ 无 WINPE_RAN → WinPE 没有运行（boot 链在 startnet.cmd 之前失败）")
+            print()
+            print("  可能原因：")
+            print("  1. UEFI 无法读取 NTFS (E: 是 NTFS，需要 FAT32)")
+            print("  2. EFI\\Microsoft\\Boot\\BCD 路径错误")
+            print("  3. boot.wim 损坏或路径不匹配")
+
+    # ── 3. 读 debug log ───────────────────────────────────────────────────────
+    print()
+    if not log_path.exists():
+        print(f"[LOG] ✗ 日志不存在: {log_path}")
+        print("      → WinPE 没有运行，或 WinPE 找不到 USB 盘符来写日志")
+    else:
+        print(f"[LOG] ✓ 日志存在: {log_path}")
+        print(f"{'─'*60}")
+        print(log_path.read_text(encoding="utf-8", errors="replace"))
+
     print(f"{'='*60}\n")
-    print(log_path.read_text(encoding="utf-8", errors="replace"))
 
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────
