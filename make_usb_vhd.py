@@ -96,6 +96,12 @@ def copy_winpe(vol_path: str = None):
             shutil.copy2(src, dst)
         print(f"    ✓ {t}")
 
+    # 放 USB 标记文件，让 debug startnet.cmd 能定位 VHD 并保存日志
+    dktm_dir = root / "DKTM"
+    dktm_dir.mkdir(exist_ok=True)
+    (dktm_dir / "DKTM_USB_MARKER.txt").write_text("QEMU_USB_VHD\n", encoding="utf-8")
+    print("    ✓ DKTM_USB_MARKER.txt")
+
     # 验证关键文件
     for f in ["EFI/Boot/bootx64.efi", "EFI/Microsoft/Boot/BCD",
               "sources/boot.wim", "Boot/boot.sdi"]:
@@ -167,6 +173,44 @@ def run_qemu():
         content = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
         print(f"\n[串口日志]\n{'─'*60}")
         print(content[-3000:] if len(content) > 3000 else content)
+
+    # 挂载 VHD 读取 WinPE debug 日志
+    print(f"\n[*] 读取 WinPE debug 日志...")
+    r_attach = subprocess.run(
+        ["diskpart", "/s", str(WORK_DIR / "dp_detach.txt")],  # reuse script path
+        capture_output=True
+    )
+    # 写 attach 脚本
+    attach_script = WORK_DIR / "dp_read.txt"
+    attach_script.write_text(
+        f'select vdisk file="{VHD_PATH}"\nattach vdisk readonly\nexit\n',
+        encoding="ascii"
+    )
+    subprocess.run(["diskpart", "/s", str(attach_script)], capture_output=True)
+    time.sleep(2)
+
+    # 通过卷 GUID 找日志
+    r2 = subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         "Get-Volume | Where-Object { $_.FileSystemLabel -eq 'DKTM_PE' } "
+         "| Select-Object -ExpandProperty Path"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
+    vol = r2.stdout.strip()
+    if vol:
+        log_path = Path(vol) / "DKTM" / "debug.log"
+        if log_path.exists():
+            print(f"\n[WinPE debug.log]\n{'─'*60}")
+            print(log_path.read_text(encoding="utf-8", errors="replace"))
+        else:
+            print(f"    [!] debug.log 不存在 ({log_path})")
+            print(f"    VHD 上的文件: {list((Path(vol) / 'DKTM').iterdir()) if (Path(vol)/'DKTM').exists() else '无 DKTM 目录'}")
+    else:
+        print("    [!] 找不到 DKTM_PE 卷")
+
+    # 卸载
+    subprocess.run(["diskpart", "/s", str(WORK_DIR / "dp_detach.txt")],
+                   capture_output=True)
 
 
 def main():
