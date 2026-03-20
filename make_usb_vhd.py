@@ -137,7 +137,7 @@ def run_qemu():
     cmd = [
         QEMU_EXE,
         "-machine", "q35",
-        "-cpu",     "qemu64",
+        "-cpu",     "Nehalem",
         "-m",       "2G",          # 2GB，boot.wim 326MB ramdisk 需要足够内存
         "-smp",     "2",
         # UEFI 固件
@@ -150,6 +150,9 @@ def run_qemu():
         "-vga", "std",
         "-chardev", f"file,id=ser0,path={SERIAL_LOG}",
         "-serial",  "chardev:ser0",
+        "-no-reboot",
+        "-d", "cpu_reset,guest_errors",
+        "-D", str(WORK_DIR / "qemu_guest.log"),
     ]
 
     print("\n[*] 启动 QEMU (USB VHD 模式, 2GB RAM)...")
