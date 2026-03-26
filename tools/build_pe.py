@@ -296,9 +296,8 @@ wpeutil reboot
         mount_dir = self.output_dir / "mount"
         startnet = mount_dir / "Windows" / "System32" / "startnet.cmd"
 
-        # WinPE 的唯一任务：初始化网络/驱动后立刻重启，由 Boot Manager 清除
-        # bootsequence 并引导回 Windows。不需要 marker 检测或复杂逻辑。
-        startnet_content = "@echo off\r\nwpeinit\r\nwpeutil reboot\r\n"
+        # exMs 测试版本：不自动重启，保持命令行打开
+        startnet_content = "@echo off\r\necho DKTM WinPE - Ready for testing\r\nwpeinit\r\necho.\r\necho WinPE ready. Type commands or exit to reboot.\r\n\r\ncmd\r\n"
 
         try:
             # Use mbcs encoding for Windows batch files (equivalent to system default)

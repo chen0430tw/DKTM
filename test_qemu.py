@@ -124,8 +124,8 @@ def build_cmd(iso: Path, vars_fd: Path) -> list:
         # UEFI 固件：只读 code + 可写 vars
         "-drive", f"if=pflash,format=raw,readonly=on,file={OVMF_CODE}",
         "-drive", f"if=pflash,format=raw,file={vars_fd}",
-        # WinPE ISO → 光驱，OVMF 会找 \EFI\Boot\bootx64.efi
-        "-drive", f"file={iso},media=cdrom,readonly=on",
+        # WinPE ISO → IDE CDROM
+        "-drive", f"file={iso},media=cdrom,readonly=on,if=ide",
         # 显示
         "-vga", "std",
         # 串口 → 文件（WinPE cmd 输出 + OVMF debug）
